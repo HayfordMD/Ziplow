@@ -1581,37 +1581,112 @@
       } catch {}
     }
 
-    let cachedStaticCatalog = null;
+    // Direct NoCodeBackend Database Connection (43023_ziplow_db)
+    const NCB_INSTANCE = '43023_ziplow_db';
+    const NCB_DATA_URL = 'https://app.nocodebackend.com/api/data';
+    const TOTAL_SALES_PAGES = 18800; // 564,511 listings across all 50 US states + DC (30 rows/page)
 
-    // Fetch randomized houses from backend API (/api/game/houses) or static GitHub Pages catalog (./houses.json)
+    async function ncbRead(table, params = {}) {
+      const qs = new URLSearchParams({ instance: NCB_INSTANCE, ...params });
+      const res = await fetch(`${NCB_DATA_URL}/read/${table}?${qs.toString()}`);
+      if (!res.ok) throw new Error(`NCB read ${table} HTTP ${res.status}`);
+      const json = await res.json();
+      return Array.isArray(json?.data) ? json.data : (Array.isArray(json) ? json : []);
+    }
+
+    async function ncbCreate(table, payload) {
+      const res = await fetch(`${NCB_DATA_URL}/create/${table}?instance=${NCB_INSTANCE}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      if (!res.ok) throw new Error(`NCB create ${table} HTTP ${res.status}`);
+      return await res.json();
+    }
+
+    async function ncbUpdate(table, id, payload) {
+      const res = await fetch(`${NCB_DATA_URL}/update/${table}?instance=${NCB_INSTANCE}&id=${encodeURIComponent(id)}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      if (!res.ok) throw new Error(`NCB update ${table} HTTP ${res.status}`);
+      return await res.json();
+    }
+
+    function parseRowPhotos(row) {
+      let photos = [];
+      if (row.photos_json) {
+        try {
+          const parsed = typeof row.photos_json === 'string' ? JSON.parse(row.photos_json) : row.photos_json;
+          if (Array.isArray(parsed)) {
+            photos = parsed.filter((u) => typeof u === 'string' && u.startsWith('http'));
+          }
+        } catch {}
+      }
+      if (photos.length === 0 && row.image_url && String(row.image_url).startsWith('http')) {
+        photos = [row.image_url];
+      }
+      return photos;
+    }
+
+    // Fetch randomized houses directly from 43023_ziplow_db.sales (564,511 listings across all 50 states + DC)
     async function fetchMoreHouses() {
       try {
-        const res = await fetch(`/api/game/houses?limit=35&_t=${Date.now()}`);
-        if (!res.ok) throw new Error('API status ' + res.status);
-        const data = await res.json();
-        if (data.ok && Array.isArray(data.houses) && data.houses.length > 0) {
-          enqueueFreshHouses(data.houses);
-          return;
+        const chosenPages = new Set();
+        while (chosenPages.size < 4) {
+          chosenPages.add(1 + Math.floor(Math.random() * TOTAL_SALES_PAGES));
         }
-      } catch (err) {
-        // Fallback to static nationwide catalog (./houses.json) on GitHub Pages
-        try {
-          if (!cachedStaticCatalog) {
-            const staticRes = await fetch('./houses.json');
-            if (staticRes.ok) {
-              const staticData = await staticRes.json();
-              if (Array.isArray(staticData.houses) && staticData.houses.length > 0) {
-                cachedStaticCatalog = staticData.houses;
+        const batchResults = await Promise.all(
+          Array.from(chosenPages).map((page) => ncbRead('sales', { limit: 30, page }).catch(() => []))
+        );
+        const rawRows = batchResults.flat();
+
+        const playable = rawRows
+          .map((row) => {
+            const photos = parseRowPhotos(row);
+            const price = Number(row.price) || 0;
+            const sqft = Number(row.sqft) || 0;
+            const city = String(row.city || '').trim();
+            const state = String(row.state || '').trim();
+            return {
+              id: row.id,
+              sale_id: row.id,
+              zpid: String(row.zpid || row.id),
+              city,
+              state,
+              sqft,
+              price,
+              price_effective_date: row.scraped_at ? String(row.scraped_at).slice(0, 10) : new Date().toISOString().slice(0, 10),
+              photos,
+              image_url: photos[0] || row.image_url || '',
+            };
+          })
+          .filter((h) => h.price >= 30000 && h.sqft > 100 && h.city && h.state && h.photos.length > 0);
+
+        if (playable.length > 0) {
+          // Interleave by state so consecutive houses span different states
+          const byState = new Map();
+          for (const h of shuffleArray(playable)) {
+            if (!byState.has(h.state)) byState.set(h.state, []);
+            byState.get(h.state).push(h);
+          }
+          const interleaved = [];
+          let added = true;
+          while (added && interleaved.length < 40) {
+            added = false;
+            for (const [, list] of byState) {
+              if (list.length > 0) {
+                interleaved.push(list.shift());
+                added = true;
               }
             }
           }
-          if (cachedStaticCatalog && cachedStaticCatalog.length > 0) {
-            enqueueFreshHouses(shuffleArray(cachedStaticCatalog).slice(0, 45));
-            return;
-          }
-        } catch (staticErr) {
-          console.warn('Static catalog fallback:', staticErr.message);
+          enqueueFreshHouses(interleaved);
+          return;
         }
+      } catch (err) {
+        console.warn('Direct DB house fetch fallback:', err.message);
       }
 
       if (housesQueue.length === 0) {
@@ -1630,6 +1705,123 @@
         ? fresh
         : shuffleArray(candidates).filter((h) => !queuedIds.has(String(h.zpid || h.sale_id || h.id)));
       housesQueue.push(...(toAdd.length > 0 ? toAdd : shuffleArray(candidates)));
+    }
+
+    async function syncGuessToDatabase(entry) {
+      const nowSql = new Date().toISOString().slice(0, 19).replace('T', ' ');
+      try {
+        await ncbCreate('game_guesses', {
+          user_id: null,
+          player_id: null,
+          guest_token: guestToken,
+          player_name: playerName,
+          sale_id: Number(entry.sale_id || entry.id || 0),
+          zpid: String(entry.zpid || ''),
+          snapshot_id: null,
+          price_effective_date: entry.price_effective_date,
+          city: entry.city,
+          state: entry.state,
+          sqft: entry.sqft,
+          image_url: entry.image_url,
+          guess_thousands: entry.guess_thousands,
+          guess_price: entry.guess_price,
+          actual_listed_price: entry.actual_listed_price,
+          diff_dollars: entry.diff_dollars,
+          abs_diff_dollars: entry.abs_diff_dollars,
+          pct_off: entry.pct_off,
+          direction: entry.direction,
+          points_earned: entry.points_earned,
+          guessed_at: nowSql,
+        });
+
+        const profiles = await ncbRead('player_profiles', { limit: 100 });
+        const existingProfile = profiles.find((p) => p.guest_token === guestToken);
+        let updatedProfile = null;
+
+        if (existingProfile) {
+          const totalGuesses = (Number(existingProfile.total_guesses) || 0) + 1;
+          const totalPoints = (Number(existingProfile.total_points) || 0) + entry.points_earned;
+          const cumAbsDiff = (Number(existingProfile.cumulative_abs_diff_dollars) || 0) + entry.abs_diff_dollars;
+          const avgAbsDiff = Math.round(cumAbsDiff / totalGuesses);
+          const prevAvgPct = Number(existingProfile.avg_pct_off) || 0;
+          const newAvgPct = Number((((prevAvgPct * (totalGuesses - 1)) + entry.pct_off) / totalGuesses).toFixed(2));
+          const prevBest = existingProfile.best_diff_dollars != null ? Number(existingProfile.best_diff_dollars) : entry.abs_diff_dollars;
+          const bestDiff = Math.min(prevBest, entry.abs_diff_dollars);
+          const isGood = entry.pct_off <= 15;
+          const curStreak = isGood ? ((Number(existingProfile.current_streak) || 0) + 1) : 0;
+          const bestStreak = Math.max(Number(existingProfile.best_streak) || 0, curStreak);
+
+          await ncbUpdate('player_profiles', existingProfile.id, {
+            display_name: playerName !== 'Guest Player' ? playerName : (existingProfile.display_name || playerName),
+            total_guesses: totalGuesses,
+            total_points: totalPoints,
+            cumulative_abs_diff_dollars: cumAbsDiff,
+            avg_abs_diff_dollars: avgAbsDiff,
+            avg_pct_off: newAvgPct,
+            best_diff_dollars: bestDiff,
+            current_streak: curStreak,
+            best_streak: bestStreak,
+            last_played_at: nowSql,
+          });
+          updatedProfile = { id: existingProfile.id, totalGuesses, totalPoints, avgAbsDiff, newAvgPct, bestDiff };
+        } else {
+          const isGood = entry.pct_off <= 15;
+          const createdProf = await ncbCreate('player_profiles', {
+            user_id: null,
+            guest_token: guestToken,
+            display_name: playerName,
+            is_authenticated: 0,
+            total_guesses: 1,
+            total_points: entry.points_earned,
+            cumulative_abs_diff_dollars: entry.abs_diff_dollars,
+            avg_abs_diff_dollars: entry.abs_diff_dollars,
+            avg_pct_off: entry.pct_off,
+            best_diff_dollars: entry.abs_diff_dollars,
+            current_streak: isGood ? 1 : 0,
+            best_streak: isGood ? 1 : 0,
+            last_played_at: nowSql,
+          });
+          updatedProfile = {
+            id: createdProf?.id || null,
+            totalGuesses: 1,
+            totalPoints: entry.points_earned,
+            avgAbsDiff: entry.abs_diff_dollars,
+            newAvgPct: entry.pct_off,
+            bestDiff: entry.abs_diff_dollars,
+          };
+        }
+
+        const lbRows = await ncbRead('leaderboards', { limit: 100 });
+        const existingLb = lbRows.find((r) => r.period_type === 'ALL_TIME' && r.guest_token === guestToken);
+        if (existingLb && updatedProfile) {
+          await ncbUpdate('leaderboards', existingLb.id, {
+            display_name: playerName !== 'Guest Player' ? playerName : (existingLb.display_name || playerName),
+            guesses_count: updatedProfile.totalGuesses,
+            total_points: updatedProfile.totalPoints,
+            total_abs_diff_dollars: updatedProfile.avgAbsDiff * updatedProfile.totalGuesses,
+            avg_abs_diff_dollars: updatedProfile.avgAbsDiff,
+            avg_pct_off: updatedProfile.newAvgPct,
+            closest_diff_dollars: updatedProfile.bestDiff,
+          });
+        } else if (updatedProfile) {
+          await ncbCreate('leaderboards', {
+            period_type: 'ALL_TIME',
+            period_date: 'ALL',
+            user_id: null,
+            player_id: updatedProfile.id,
+            guest_token: guestToken,
+            display_name: playerName,
+            guesses_count: updatedProfile.totalGuesses,
+            total_points: updatedProfile.totalPoints,
+            total_abs_diff_dollars: entry.abs_diff_dollars,
+            avg_abs_diff_dollars: updatedProfile.avgAbsDiff,
+            avg_pct_off: updatedProfile.newAvgPct,
+            closest_diff_dollars: updatedProfile.bestDiff,
+          });
+        }
+      } catch (err) {
+        console.warn('Direct DB guess sync warning:', err.message);
+      }
     }
 
     // Submit Guess -> Show Answer Modal -> Advance when player clicks Continue
@@ -1681,16 +1873,8 @@
       localStorage.setItem('ziplow_last_results', JSON.stringify(localResults));
       updateHeaderAndStats();
 
-      // Persist asynchronously to NoCodeBackend (`game_guesses`, `player_profiles`, `leaderboards`)
-      fetch('/api/game/guess', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          ...resultEntry,
-          guest_token: guestToken,
-          player_name: playerName,
-        }),
-      }).catch((err) => console.warn('Background guess sync error:', err.message));
+      // Persist directly to NoCodeBackend (`game_guesses`, `player_profiles`, `leaderboards`)
+      syncGuessToDatabase(resultEntry);
 
       // Open the Answer Modal (stays open until player clicks Continue)
       showAnswerFeedbackModal(resultEntry);
@@ -1902,38 +2086,24 @@
 
     async function loadLeaderboard() {
       const container = document.getElementById('leaderboardListContainer');
-      container.innerHTML = `<div style="text-align:center; padding: 20px; color: var(--text-sub);">Loading leaderboard...</div>`;
+      container.innerHTML = `<div style="text-align:center; padding: 20px; color: var(--text-sub);">Loading leaderboard from database...</div>`;
       try {
-        const res = await fetch('/api/game/leaderboard');
-        const data = await res.json();
-        if (data.ok && Array.isArray(data.leaderboard) && data.leaderboard.length > 0) {
-          renderLeaderboardRows(data.leaderboard);
+        const rows = await ncbRead('leaderboards', { limit: 100 });
+        const filtered = rows
+          .filter((r) => (r.period_type || 'ALL_TIME') === 'ALL_TIME')
+          .sort((a, b) => {
+            const ptsDiff = (Number(b.total_points) || 0) - (Number(a.total_points) || 0);
+            if (ptsDiff !== 0) return ptsDiff;
+            return (Number(a.avg_abs_diff_dollars) || 999999999) - (Number(b.avg_abs_diff_dollars) || 999999999);
+          });
+        if (filtered.length > 0) {
+          renderLeaderboardRows(filtered.slice(0, 50));
           return;
         }
       } catch (err) {
-        // Fallback leaderboard for static GitHub Pages deployment
+        console.warn('Direct DB leaderboard load warning:', err.message);
       }
-      const fallbackRows = [
-        { guest_token: 'bot_1', display_name: 'DenverValuer', guesses_count: 14, closest_diff_dollars: 1000, avg_abs_diff_dollars: 18500, total_points: 11840 },
-        { guest_token: 'bot_2', display_name: 'ZestimatePro', guesses_count: 11, closest_diff_dollars: 2500, avg_abs_diff_dollars: 24200, total_points: 9120 },
-        { guest_token: 'bot_3', display_name: 'MileHighRealtor', guesses_count: 8, closest_diff_dollars: 4000, avg_abs_diff_dollars: 31000, total_points: 6540 },
-      ];
-      if (localResults.length > 0) {
-        const myPoints = localResults.reduce((acc, r) => acc + (Number(r.points_earned) || 0), 0);
-        const myTotalOff = localResults.reduce((acc, r) => acc + (Number(r.abs_diff_dollars) || 0), 0);
-        const myAvgOff = Math.round(myTotalOff / localResults.length);
-        const myBestOff = Math.min(...localResults.map((r) => Number(r.abs_diff_dollars) || 0));
-        fallbackRows.push({
-          guest_token: guestToken,
-          display_name: playerName,
-          guesses_count: localResults.length,
-          closest_diff_dollars: myBestOff,
-          avg_abs_diff_dollars: myAvgOff,
-          total_points: myPoints,
-        });
-      }
-      fallbackRows.sort((a, b) => b.total_points - a.total_points);
-      renderLeaderboardRows(fallbackRows);
+      container.innerHTML = `<div style="text-align:center; padding: 20px; color: var(--text-sub);">Submit a guess to join the leaderboard!</div>`;
     }
 
     async function savePlayerProfile() {
@@ -1952,21 +2122,42 @@
 
       statusEl.textContent = 'Saving to database...';
       try {
-        const res = await fetch('/api/game/player', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
+        const nowSql = new Date().toISOString().slice(0, 19).replace('T', ' ');
+        const profiles = await ncbRead('player_profiles', { limit: 100 });
+        const existing = profiles.find((p) => p.guest_token === guestToken);
+        if (existing) {
+          await ncbUpdate('player_profiles', existing.id, {
+            display_name: playerName,
+            email: playerEmail || existing.email || null,
+            is_authenticated: playerEmail ? 1 : (existing.is_authenticated || 0),
+            last_played_at: nowSql,
+          });
+        } else {
+          await ncbCreate('player_profiles', {
+            user_id: null,
             guest_token: guestToken,
             display_name: playerName,
-            email: playerEmail || undefined,
-          }),
-        });
-        const data = await res.json();
-        if (data.ok) {
-          statusEl.textContent = '✅ Profile synced to database & leaderboard!';
-        } else {
-          statusEl.textContent = '✅ Saved locally!';
+            email: playerEmail || null,
+            is_authenticated: playerEmail ? 1 : 0,
+            total_guesses: 0,
+            total_points: 0,
+            cumulative_abs_diff_dollars: 0,
+            avg_abs_diff_dollars: 0,
+            avg_pct_off: 0,
+            best_diff_dollars: null,
+            current_streak: 0,
+            best_streak: 0,
+            last_played_at: nowSql,
+          });
         }
+
+        const lbRows = await ncbRead('leaderboards', { limit: 100 });
+        for (const lb of lbRows) {
+          if (lb.guest_token === guestToken) {
+            await ncbUpdate('leaderboards', lb.id, { display_name: playerName });
+          }
+        }
+        statusEl.textContent = '✅ Profile synced directly to 43023_ziplow_db!';
       } catch {
         statusEl.textContent = '✅ Saved locally!';
       }
