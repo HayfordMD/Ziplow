@@ -53,6 +53,7 @@ export class NoCodeBackendService {
     if (options.id) params.append('id', options.id);
     if (options.ownerId) params.append('owner_id', options.ownerId);
     if (options.limit) params.append('limit', String(options.limit));
+    if (options.page) params.append('page', String(options.page));
     if (options.offset) params.append('offset', String(options.offset));
 
     const url = `${this.dataUrl}/read/${table}?${params.toString()}`;

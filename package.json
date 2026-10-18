@@ -5,6 +5,8 @@
   "type": "module",
   "main": "src/lambda/index.js",
   "scripts": {
+    "start": "node src/lambda/local-dev.js",
+    "dev": "node src/lambda/local-dev.js",
     "setup": "node scripts/setup-wizard.js",
     "check": "node scripts/test-connections.js",
     "aws:auto": "node scripts/auto-configure-aws.js",

@@ -13,6 +13,14 @@ import {
   createPortalHandler,
   stripeWebhookHandler,
 } from './routes/stripe.js';
+import {
+  getGameHousesHandler,
+  submitGuessHandler,
+  getGameResultsHandler,
+  getLeaderboardHandler,
+  getHousePriceSnapshotsHandler,
+  updatePlayerProfileHandler,
+} from './routes/game.js';
 
 // Initialize router
 export const router = new Router();
@@ -20,6 +28,14 @@ export const router = new Router();
 // Define routes
 router.get('/', healthHandler);
 router.get('/api/health', healthHandler);
+
+// Ziplow House Price Guessing Game API
+router.get('/api/game/houses', getGameHousesHandler);
+router.post('/api/game/guess', submitGuessHandler);
+router.get('/api/game/results', getGameResultsHandler);
+router.get('/api/game/leaderboard', getLeaderboardHandler);
+router.get('/api/game/price-history', getHousePriceSnapshotsHandler);
+router.post('/api/game/player', updatePlayerProfileHandler);
 
 // Email (AWS SES)
 router.post('/api/email/send', sendEmailHandler);
