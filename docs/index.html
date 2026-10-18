@@ -600,6 +600,11 @@
       box-shadow: 0 20px 50px rgba(16, 185, 129, 0.22);
     }
 
+    .feedback-card.mid {
+      border-color: rgba(251, 191, 36, 0.72);
+      box-shadow: 0 20px 50px rgba(251, 191, 36, 0.2);
+    }
+
     .feedback-card.incorrect {
       border-color: rgba(244, 63, 94, 0.7);
       box-shadow: 0 20px 50px rgba(244, 63, 94, 0.22);
@@ -679,6 +684,12 @@
       color: #34d399;
     }
 
+    .feedback-verdict.mid {
+      background: rgba(251, 191, 36, 0.18);
+      border: 1px solid rgba(251, 191, 36, 0.55);
+      color: #fbbf24;
+    }
+
     .feedback-verdict.incorrect {
       background: rgba(244, 63, 94, 0.2);
       border: 1px solid rgba(244, 63, 94, 0.55);
@@ -686,7 +697,7 @@
     }
 
     .feedback-pct-hero {
-      font-size: 30px;
+      font-size: 29px;
       font-weight: 900;
       letter-spacing: -0.6px;
       line-height: 1.05;
@@ -705,8 +716,36 @@
       color: #fb7185;
     }
 
+    .feedback-proximity-note {
+      font-size: 14px;
+      font-weight: 800;
+      padding: 5px 14px;
+      border-radius: 10px;
+      align-self: center;
+      line-height: 1.25;
+      letter-spacing: 0.1px;
+    }
+
+    .feedback-proximity-note.good {
+      background: rgba(16, 185, 129, 0.15);
+      border: 1px solid rgba(16, 185, 129, 0.4);
+      color: #6ee7b7;
+    }
+
+    .feedback-proximity-note.mid {
+      background: rgba(251, 191, 36, 0.15);
+      border: 1px solid rgba(251, 191, 36, 0.4);
+      color: #fde68a;
+    }
+
+    .feedback-proximity-note.far {
+      background: rgba(244, 63, 94, 0.15);
+      border: 1px solid rgba(244, 63, 94, 0.4);
+      color: #fda4af;
+    }
+
     .feedback-headline {
-      font-size: 20px;
+      font-size: 19px;
       font-weight: 900;
       color: #fff;
       margin: 0;
@@ -1212,6 +1251,7 @@
       <div class="feedback-card" id="feedbackCard">
         <div class="feedback-verdict correct" id="feedbackVerdictBadge">RIGHT ANSWER</div>
         <div class="feedback-pct-hero good" id="feedbackPctHero">0% OFF</div>
+        <div class="feedback-proximity-note good" id="feedbackProximityNote">SPOT ON — Nailed it!</div>
         <h2 class="feedback-headline" id="feedbackHeadline">You were $0 OFF</h2>
 
         <!-- Interactive House Photo Carousel inside the Answer Modal -->
@@ -1909,6 +1949,79 @@
       modalPhotoCounterBadge.textContent = `${modalPhotoIndex + 1} / ${total}`;
     }
 
+    function getGuessReaction(pctOff, absDiffDollars, direction) {
+      const pct = Math.round(Number(pctOff) || 0);
+      const dirText = direction === 'OVER' ? 'too high' : 'too low';
+      if (absDiffDollars === 0 || direction === 'EXACT') {
+        return {
+          verdict: 'RIGHT ANSWER • SPOT ON!',
+          tag: 'SPOT ON!',
+          note: 'Bullseye — nailed the exact price!',
+          tone: 'good',
+          cardClass: 'correct',
+          verdictClass: 'correct',
+        };
+      }
+      if (pct <= 4) {
+        return {
+          verdict: 'RIGHT ANSWER • SO CLOSE!',
+          tag: 'SO CLOSE!',
+          note: `So close — barely ${dirText}!`,
+          tone: 'good',
+          cardClass: 'correct',
+          verdictClass: 'correct',
+        };
+      }
+      if (pct <= 10) {
+        return {
+          verdict: 'CLOSE!',
+          tag: 'CLOSE!',
+          note: `Close! Right in the neighborhood — just a touch ${dirText}.`,
+          tone: 'good',
+          cardClass: 'correct',
+          verdictClass: 'correct',
+        };
+      }
+      if (pct <= 18) {
+        return {
+          verdict: 'ALMOST — NOT QUITE',
+          tag: 'ALMOST - NOT QUITE',
+          note: `Almost - not quite! In the ballpark, just a bit ${dirText}.`,
+          tone: 'mid',
+          cardClass: 'mid',
+          verdictClass: 'mid',
+        };
+      }
+      if (pct <= 30) {
+        return {
+          verdict: 'NOT QUITE',
+          tag: 'NOT QUITE',
+          note: `Not quite — missed the mark by a fair bit ${dirText}.`,
+          tone: 'mid',
+          cardClass: 'mid',
+          verdictClass: 'mid',
+        };
+      }
+      if (pct <= 50) {
+        return {
+          verdict: 'WAY OFF!',
+          tag: 'WAY OFF!',
+          note: `Way off — aimed way ${dirText} on this one!`,
+          tone: 'far',
+          cardClass: 'incorrect',
+          verdictClass: 'incorrect',
+        };
+      }
+      return {
+        verdict: 'WAAAAY WRONG!',
+        tag: 'WAAAAY WRONG!',
+        note: `WAAAAY wrong! Not even close — way ${dirText}!`,
+        tone: 'far',
+        cardClass: 'incorrect',
+        verdictClass: 'incorrect',
+      };
+    }
+
     function showAnswerFeedbackModal(entry) {
       isPopupActive = true;
       submitGuessBtn.disabled = true;
@@ -1917,6 +2030,7 @@
       const cardEl = document.getElementById('feedbackCard');
       const verdictBadgeEl = document.getElementById('feedbackVerdictBadge');
       const pctHeroEl = document.getElementById('feedbackPctHero');
+      const proximityNoteEl = document.getElementById('feedbackProximityNote');
       const headlineEl = document.getElementById('feedbackHeadline');
       const subBadgeEl = document.getElementById('feedbackSubBadge');
       const yourGuessEl = document.getElementById('feedbackYourGuess');
@@ -1943,17 +2057,17 @@
       houseLocEl.textContent = `${entry.city}, ${entry.state}`;
       houseSqftEl.textContent = `${Number(entry.sqft || 0).toLocaleString('en-US')} sq ft`;
 
-      // Determine Right vs Wrong Answer (exact match in thousands or within 5% tolerance) — no emojis
       const roundedPct = Math.round(Number(entry.pct_off) || 0);
-      const isCorrect = entry.abs_diff_dollars === 0 || roundedPct <= 5;
-      const toneClass = isCorrect ? 'good' : (roundedPct <= 20 ? 'mid' : 'far');
+      const reaction = getGuessReaction(roundedPct, entry.abs_diff_dollars, entry.direction);
 
-      cardEl.className = 'feedback-card ' + (isCorrect ? 'correct' : 'incorrect');
-      verdictBadgeEl.className = 'feedback-verdict ' + (isCorrect ? 'correct' : 'incorrect');
-      verdictBadgeEl.textContent = isCorrect ? 'RIGHT ANSWER' : 'WRONG ANSWER';
+      cardEl.className = 'feedback-card ' + reaction.cardClass;
+      verdictBadgeEl.className = 'feedback-verdict ' + reaction.verdictClass;
+      verdictBadgeEl.textContent = reaction.verdict;
 
-      // Prominent Percentage Too High / Too Low & Dollar Too High / Too Low headline (no emojis)
-      pctHeroEl.className = 'feedback-pct-hero ' + toneClass;
+      // Prominent Percentage Too High / Too Low, Proximity Reaction Note, & Dollar Too High / Too Low headline
+      pctHeroEl.className = 'feedback-pct-hero ' + reaction.tone;
+      proximityNoteEl.className = 'feedback-proximity-note ' + reaction.tone;
+      proximityNoteEl.textContent = reaction.note;
 
       if (entry.direction === 'EXACT') {
         pctHeroEl.textContent = '0% EXACT';
@@ -1970,7 +2084,7 @@
       actualPriceEl.textContent = formatDollars(entry.actual_listed_price);
 
       subBadgeEl.textContent = `+${entry.points_earned.toLocaleString()} pts earned`;
-      subBadgeEl.className = 'feedback-sub ' + toneClass;
+      subBadgeEl.className = 'feedback-sub ' + reaction.tone;
 
       overlay.classList.add('active');
       requestAnimationFrame(() => {
@@ -2032,11 +2146,11 @@
       container.innerHTML = localResults
         .map((r) => {
           const pct = Math.round(Number(r.pct_off) || 0);
-          const badgeClass = pct <= 10 ? 'good' : (pct <= 25 ? 'mid' : 'far');
+          const reaction = getGuessReaction(pct, Number(r.abs_diff_dollars) || 0, r.direction);
           const dirLabel = r.direction === 'OVER' ? 'TOO HIGH' : 'TOO LOW';
           const signText = r.direction === 'EXACT'
-            ? 'Spot On! (0%)'
-            : `${ pct }% ${dirLabel} (${formatDollars(r.abs_diff_dollars)} ${dirLabel})`;
+            ? `${reaction.tag} • 0% ($0 OFF)`
+            : `${reaction.tag} • ${pct}% ${dirLabel} (${formatDollars(r.abs_diff_dollars)} ${dirLabel})`;
           return `
             <div class="result-item">
               <img class="result-thumb" src="${r.image_url}" alt="${r.city}, ${r.state}" />
@@ -2049,7 +2163,7 @@
                   <span>Guess: <b>${formatDollars(r.guess_price)}</b></span>
                   <span>Listed: <b>${formatDollars(r.actual_listed_price)}</b></span>
                 </div>
-                <div class="result-diff-pill ${badgeClass}">
+                <div class="result-diff-pill ${reaction.tone}">
                   ${signText} • +${r.points_earned || 0} pts
                 </div>
               </div>
