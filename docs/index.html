@@ -1,0 +1,2028 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <title>Ziplow — Guess the Listed House Price</title>
+  <style>
+    :root {
+      --bg-outer: #080c14;
+      --bg-app: #0f172a;
+      --card-bg: #1e293b;
+      --card-elevated: #263349;
+      --border: rgba(148, 163, 184, 0.18);
+      --text-main: #f8fafc;
+      --text-sub: #94a3b8;
+      --accent: #3b82f6;
+      --accent-dark: #2563eb;
+      --accent-glow: rgba(59, 130, 246, 0.35);
+      --emerald: #10b981;
+      --emerald-bg: rgba(16, 185, 129, 0.14);
+      --amber: #f59e0b;
+      --amber-bg: rgba(245, 158, 11, 0.15);
+      --rose: #f43f5e;
+      --rose-bg: rgba(244, 63, 94, 0.15);
+      --radius-lg: 18px;
+      --radius-md: 13px;
+      --radius-sm: 10px;
+    }
+
+    * {
+      box-sizing: border-box;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    html, body {
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      height: 100dvh;
+      overflow: hidden;
+      background: var(--bg-outer);
+      color: var(--text-main);
+      font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Inter', 'Segoe UI', Roboto, sans-serif;
+      user-select: none;
+    }
+
+    /* Mobile Phone Container */
+    .phone-frame {
+      width: 100%;
+      max-width: 430px;
+      height: 100dvh;
+      margin: 0 auto;
+      background: var(--bg-app);
+      display: flex;
+      flex-direction: column;
+      position: relative;
+      overflow: hidden;
+      box-shadow: 0 0 50px rgba(0, 0, 0, 0.75);
+    }
+
+    @media (min-width: 500px) {
+      body {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: radial-gradient(circle at 50% 20%, #172554 0%, #060911 70%);
+      }
+      .phone-frame {
+        height: min(94dvh, 860px);
+        border-radius: 34px;
+        border: 6px solid #1e293b;
+      }
+    }
+
+    /* Compact Top Bar */
+    .top-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 14px;
+      background: rgba(15, 23, 42, 0.92);
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+      z-index: 10;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-weight: 800;
+      font-size: 18px;
+      letter-spacing: -0.4px;
+      color: #fff;
+    }
+
+    .brand-icon {
+      width: 28px;
+      height: 28px;
+      border-radius: 8px;
+      background: linear-gradient(135deg, #3b82f6, #1d4ed8);
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 15px;
+      box-shadow: 0 2px 8px var(--accent-glow);
+    }
+
+    .top-actions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .pill-btn {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      color: var(--text-main);
+      padding: 5px 10px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 600;
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      cursor: pointer;
+      touch-action: manipulation;
+    }
+
+    .pill-btn:active {
+      transform: scale(0.96);
+    }
+
+    /* Main Game Content Stack */
+    .game-stack {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      padding: 10px 12px 12px;
+      gap: 10px;
+      overflow: hidden;
+    }
+
+    /* 1. Picture Carousel Box */
+    .carousel-wrapper {
+      position: relative;
+      flex: 1;
+      min-height: 210px;
+      max-height: 44dvh;
+      border-radius: var(--radius-lg);
+      overflow: hidden;
+      background: #090d16;
+      border: 1px solid var(--border);
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+    }
+
+    .carousel-track {
+      display: flex;
+      width: 100%;
+      height: 100%;
+      overflow-x: auto;
+      overflow-y: hidden;
+      scroll-snap-type: x mandatory;
+      scroll-behavior: smooth;
+      -webkit-overflow-scrolling: touch;
+      scrollbar-width: none;
+    }
+
+    .carousel-track::-webkit-scrollbar {
+      display: none;
+    }
+
+    .carousel-slide {
+      flex: 0 0 100%;
+      width: 100%;
+      height: 100%;
+      scroll-snap-align: start;
+      position: relative;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: #090d16;
+    }
+
+    .carousel-slide img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: block;
+      user-drag: none;
+      -webkit-user-drag: none;
+    }
+
+    .carousel-badge {
+      position: absolute;
+      top: 10px;
+      right: 10px;
+      background: rgba(15, 23, 42, 0.82);
+      backdrop-filter: blur(8px);
+      color: #fff;
+      padding: 5px 10px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 700;
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      pointer-events: none;
+      z-index: 4;
+    }
+
+    .carousel-hint {
+      position: absolute;
+      bottom: 10px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(15, 23, 42, 0.78);
+      backdrop-filter: blur(6px);
+      color: #e2e8f0;
+      padding: 4px 11px;
+      border-radius: 999px;
+      font-size: 11px;
+      font-weight: 600;
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      pointer-events: none;
+      white-space: nowrap;
+      z-index: 4;
+    }
+
+    .carousel-nav {
+      position: absolute;
+      top: 50%;
+      transform: translateY(-50%);
+      width: 36px;
+      height: 36px;
+      border-radius: 50%;
+      background: rgba(15, 23, 42, 0.76);
+      backdrop-filter: blur(6px);
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      color: #fff;
+      font-size: 20px;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      z-index: 5;
+      touch-action: manipulation;
+      padding: 0;
+      line-height: 1;
+    }
+
+    .carousel-nav:active {
+      transform: translateY(-50%) scale(0.92);
+      background: rgba(59, 130, 246, 0.85);
+    }
+
+    .carousel-nav.prev { left: 8px; }
+    .carousel-nav.next { right: 8px; }
+
+    /* 2. Locations and Sq Feet Bar */
+    .house-meta-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+      padding: 11px 14px;
+      flex-shrink: 0;
+      gap: 10px;
+    }
+
+    .location-block {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-width: 0;
+    }
+
+    .loc-pin {
+      width: 32px;
+      height: 32px;
+      border-radius: 9px;
+      background: rgba(59, 130, 246, 0.16);
+      color: #60a5fa;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 16px;
+      flex-shrink: 0;
+    }
+
+    .loc-text {
+      min-width: 0;
+    }
+
+    .loc-label {
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.6px;
+      color: var(--text-sub);
+      font-weight: 700;
+    }
+
+    .loc-city-state {
+      font-size: 17px;
+      font-weight: 800;
+      color: #fff;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .sqft-block {
+      text-align: right;
+      flex-shrink: 0;
+      background: var(--card-elevated);
+      padding: 6px 12px;
+      border-radius: 10px;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+    }
+
+    .sqft-label {
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.6px;
+      color: var(--text-sub);
+      font-weight: 700;
+    }
+
+    .sqft-value {
+      font-size: 17px;
+      font-weight: 800;
+      color: #38bdf8;
+    }
+
+    /* 3. Controls Card: {###}K Input, +100K +50K -50 -100K, Submit, Last Results */
+    .controls-card {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      padding: 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      flex-shrink: 0;
+    }
+
+    .price-box-container {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      background: #0b1120;
+      border: 2px solid rgba(59, 130, 246, 0.45);
+      border-radius: var(--radius-md);
+      padding: 8px 14px;
+      transition: border-color 0.2s, box-shadow 0.2s;
+    }
+
+    .price-box-container:focus-within {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px var(--accent-glow);
+    }
+
+    .price-box-caption {
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.7px;
+      color: var(--text-sub);
+      margin-bottom: 2px;
+    }
+
+    .price-input-row {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      width: 100%;
+    }
+
+    .price-number-wrap {
+      display: inline-flex;
+      align-items: baseline;
+      justify-content: center;
+      gap: 3px;
+    }
+
+    .currency-prefix {
+      font-size: 26px;
+      font-weight: 800;
+      color: #60a5fa;
+    }
+
+    .price-k-input {
+      width: 118px;
+      background: transparent;
+      border: none;
+      outline: none;
+      color: #fff;
+      font-size: 34px;
+      font-weight: 900;
+      text-align: center;
+      font-family: inherit;
+      letter-spacing: -0.5px;
+      padding: 0;
+      margin: 0;
+      -moz-appearance: textfield;
+    }
+
+    .price-k-input::-webkit-outer-spin-button,
+    .price-k-input::-webkit-inner-spin-button {
+      -webkit-appearance: none;
+      margin: 0;
+    }
+
+    .k-suffix {
+      font-size: 28px;
+      font-weight: 900;
+      color: #60a5fa;
+    }
+
+    /* Chevron Up / Down (+1K / -1K) */
+    .chevron-col {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      margin-left: 6px;
+    }
+
+    .chevron-btn {
+      background: var(--card-elevated);
+      border: 1px solid rgba(96, 165, 250, 0.4);
+      color: #93c5fd;
+      border-radius: 7px;
+      padding: 3px 9px;
+      font-size: 11px;
+      font-weight: 800;
+      line-height: 1.1;
+      cursor: pointer;
+      touch-action: manipulation;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 3px;
+      transition: transform 0.08s ease, background 0.15s;
+    }
+
+    .chevron-btn:active {
+      transform: scale(0.92);
+      background: rgba(59, 130, 246, 0.35);
+    }
+
+    .full-dollar-preview {
+      font-size: 13px;
+      font-weight: 700;
+      color: var(--emerald);
+      margin-top: 2px;
+    }
+
+    /* Quick Adjust Buttons: +100K +50K +10K -10K -50K -100K */
+    .adjust-row {
+      display: grid;
+      grid-template-columns: repeat(6, 1fr);
+      gap: 6px;
+    }
+
+    .adj-btn {
+      padding: 10px 2px;
+      border-radius: var(--radius-sm);
+      font-size: 12.5px;
+      font-weight: 800;
+      border: 1px solid var(--border);
+      cursor: pointer;
+      touch-action: manipulation;
+      transition: transform 0.08s ease, background 0.15s;
+      text-align: center;
+      white-space: nowrap;
+    }
+
+    .adj-btn:active {
+      transform: scale(0.94);
+    }
+
+    .adj-btn.plus {
+      background: rgba(16, 185, 129, 0.15);
+      border-color: rgba(16, 185, 129, 0.38);
+      color: #34d399;
+    }
+
+    .adj-btn.plus:hover {
+      background: rgba(16, 185, 129, 0.24);
+    }
+
+    .adj-btn.minus {
+      background: rgba(244, 63, 94, 0.14);
+      border-color: rgba(244, 63, 94, 0.35);
+      color: #fb7185;
+    }
+
+    .adj-btn.minus:hover {
+      background: rgba(244, 63, 94, 0.24);
+    }
+
+    /* Submit Button */
+    .submit-btn {
+      width: 100%;
+      padding: 14px;
+      border-radius: var(--radius-md);
+      border: none;
+      background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+      color: #fff;
+      font-size: 17px;
+      font-weight: 800;
+      letter-spacing: 0.2px;
+      cursor: pointer;
+      touch-action: manipulation;
+      box-shadow: 0 4px 16px var(--accent-glow);
+      transition: transform 0.1s ease, filter 0.15s;
+    }
+
+    .submit-btn:active {
+      transform: scale(0.98);
+    }
+
+    .submit-btn:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+
+    /* Modal Button (Last Results) */
+    .results-modal-btn {
+      width: 100%;
+      padding: 11px 14px;
+      border-radius: var(--radius-md);
+      background: var(--card-elevated);
+      border: 1px solid var(--border);
+      color: #e2e8f0;
+      font-size: 14px;
+      font-weight: 700;
+      cursor: pointer;
+      touch-action: manipulation;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      transition: background 0.15s, transform 0.1s;
+    }
+
+    .results-modal-btn:active {
+      transform: scale(0.98);
+    }
+
+    .results-count-badge {
+      background: rgba(59, 130, 246, 0.25);
+      color: #93c5fd;
+      padding: 2px 8px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 800;
+    }
+
+    /* Feedback Answer Popup Modal (Manual Continue + Full House Photo Carousel) */
+    .feedback-overlay {
+      position: absolute;
+      inset: 0;
+      background: rgba(8, 12, 20, 0.86);
+      backdrop-filter: blur(6px);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 12px;
+      z-index: 100;
+      animation: fadeIn 0.16s ease-out;
+    }
+
+    .feedback-overlay.active {
+      display: flex;
+    }
+
+    .feedback-card {
+      width: 100%;
+      max-width: 396px;
+      max-height: 92dvh;
+      background: #1e293b;
+      border: 2px solid rgba(59, 130, 246, 0.5);
+      border-radius: 22px;
+      padding: 14px;
+      text-align: center;
+      box-shadow: 0 20px 50px rgba(0, 0, 0, 0.85);
+      animation: popScale 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+      overflow-y: auto;
+      position: relative;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .feedback-card.correct {
+      border-color: rgba(16, 185, 129, 0.75);
+      box-shadow: 0 20px 50px rgba(16, 185, 129, 0.22);
+    }
+
+    .feedback-card.incorrect {
+      border-color: rgba(244, 63, 94, 0.7);
+      box-shadow: 0 20px 50px rgba(244, 63, 94, 0.22);
+    }
+
+    /* Interactive House Photo Carousel Inside Right/Wrong Answer Modal */
+    .modal-carousel-box {
+      position: relative;
+      width: 100%;
+      height: 205px;
+      border-radius: 14px;
+      overflow: hidden;
+      background: #090d16;
+      border: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+
+    .modal-carousel-track {
+      display: flex;
+      width: 100%;
+      height: 100%;
+      overflow-x: auto;
+      overflow-y: hidden;
+      scroll-snap-type: x mandatory;
+      scroll-behavior: smooth;
+      -webkit-overflow-scrolling: touch;
+      scrollbar-width: none;
+    }
+
+    .modal-carousel-track::-webkit-scrollbar {
+      display: none;
+    }
+
+    .modal-house-meta {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      background: #0f172a;
+      border: 1px solid var(--border);
+      border-radius: 11px;
+      padding: 8px 12px;
+      text-align: left;
+    }
+
+    .modal-house-loc {
+      font-size: 14px;
+      font-weight: 800;
+      color: #fff;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .modal-house-sqft {
+      font-size: 13px;
+      font-weight: 800;
+      color: #38bdf8;
+      flex-shrink: 0;
+    }
+
+    .feedback-verdict {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      align-self: center;
+      padding: 5px 16px;
+      border-radius: 999px;
+      font-size: 13px;
+      font-weight: 900;
+      letter-spacing: 0.9px;
+      text-transform: uppercase;
+    }
+
+    .feedback-verdict.correct {
+      background: rgba(16, 185, 129, 0.2);
+      border: 1px solid rgba(16, 185, 129, 0.55);
+      color: #34d399;
+    }
+
+    .feedback-verdict.incorrect {
+      background: rgba(244, 63, 94, 0.2);
+      border: 1px solid rgba(244, 63, 94, 0.55);
+      color: #fb7185;
+    }
+
+    .feedback-pct-hero {
+      font-size: 30px;
+      font-weight: 900;
+      letter-spacing: -0.6px;
+      line-height: 1.05;
+      margin: 0;
+    }
+
+    .feedback-pct-hero.good {
+      color: #34d399;
+    }
+
+    .feedback-pct-hero.mid {
+      color: #fbbf24;
+    }
+
+    .feedback-pct-hero.far {
+      color: #fb7185;
+    }
+
+    .feedback-headline {
+      font-size: 20px;
+      font-weight: 900;
+      color: #fff;
+      margin: 0;
+      letter-spacing: -0.3px;
+    }
+
+    .feedback-sub {
+      font-size: 12px;
+      font-weight: 700;
+      padding: 4px 12px;
+      border-radius: 999px;
+      display: inline-block;
+      align-self: center;
+    }
+
+    .feedback-sub.good {
+      background: var(--emerald-bg);
+      color: #34d399;
+    }
+
+    .feedback-sub.mid {
+      background: var(--amber-bg);
+      color: #fbbf24;
+    }
+
+    .feedback-sub.far {
+      background: var(--rose-bg);
+      color: #fb7185;
+    }
+
+    .comparison-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+    }
+
+    .comp-box {
+      background: #0f172a;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 9px;
+    }
+
+    .comp-label {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: var(--text-sub);
+      font-weight: 700;
+      margin-bottom: 3px;
+    }
+
+    .comp-val {
+      font-size: 18px;
+      font-weight: 800;
+      color: #fff;
+    }
+
+    .comp-val.actual {
+      color: #38bdf8;
+    }
+
+    .continue-btn {
+      width: 100%;
+      padding: 14px;
+      border-radius: var(--radius-md);
+      border: none;
+      background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+      color: #fff;
+      font-size: 16px;
+      font-weight: 800;
+      letter-spacing: 0.3px;
+      cursor: pointer;
+      touch-action: manipulation;
+      box-shadow: 0 4px 16px var(--accent-glow);
+      transition: transform 0.1s ease;
+    }
+
+    .continue-btn:active {
+      transform: scale(0.98);
+    }
+
+    /* Last Results / Leaderboard / Profile Drawer Modal */
+    .drawer-overlay {
+      position: absolute;
+      inset: 0;
+      background: rgba(8, 12, 20, 0.82);
+      backdrop-filter: blur(6px);
+      display: none;
+      flex-direction: column;
+      justify-content: flex-end;
+      z-index: 90;
+    }
+
+    .drawer-overlay.open {
+      display: flex;
+    }
+
+    .drawer-sheet {
+      background: #162033;
+      border-top: 1px solid rgba(255, 255, 255, 0.15);
+      border-radius: 24px 24px 0 0;
+      height: 84%;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      animation: slideUp 0.22s ease-out;
+    }
+
+    .drawer-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 14px 16px 10px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .drawer-title {
+      font-size: 17px;
+      font-weight: 800;
+      color: #fff;
+    }
+
+    .close-btn {
+      background: var(--card-elevated);
+      border: 1px solid var(--border);
+      color: #cbd5e1;
+      width: 32px;
+      height: 32px;
+      border-radius: 50%;
+      font-size: 16px;
+      font-weight: 700;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .drawer-tabs {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 6px;
+      padding: 10px 16px;
+      background: #0f172a;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .tab-btn {
+      padding: 8px 6px;
+      border-radius: 9px;
+      border: 1px solid transparent;
+      background: transparent;
+      color: var(--text-sub);
+      font-size: 12px;
+      font-weight: 700;
+      cursor: pointer;
+    }
+
+    .tab-btn.active {
+      background: var(--card-bg);
+      color: #fff;
+      border-color: rgba(59, 130, 246, 0.45);
+    }
+
+    .drawer-body {
+      flex: 1;
+      overflow-y: auto;
+      padding: 14px 16px 24px;
+    }
+
+    /* Summary Stats Banner inside Modal */
+    .stats-strip {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 8px;
+      margin-bottom: 14px;
+    }
+
+    .stat-tile {
+      background: #0f172a;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 9px;
+      text-align: center;
+    }
+
+    .stat-tile-label {
+      font-size: 10px;
+      text-transform: uppercase;
+      color: var(--text-sub);
+      font-weight: 700;
+    }
+
+    .stat-tile-val {
+      font-size: 15px;
+      font-weight: 800;
+      color: #fff;
+      margin-top: 2px;
+    }
+
+    /* Result Item Card */
+    .result-item {
+      display: flex;
+      gap: 11px;
+      background: #0f172a;
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 10px;
+      margin-bottom: 10px;
+      align-items: center;
+    }
+
+    .result-thumb {
+      width: 66px;
+      height: 66px;
+      border-radius: 10px;
+      object-fit: cover;
+      flex-shrink: 0;
+      background: #1e293b;
+    }
+
+    .result-info {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .result-loc {
+      font-size: 14px;
+      font-weight: 800;
+      color: #fff;
+      display: flex;
+      justify-content: space-between;
+      gap: 6px;
+    }
+
+    .result-sqft {
+      font-size: 12px;
+      color: #38bdf8;
+      font-weight: 700;
+    }
+
+    .result-prices {
+      display: flex;
+      gap: 10px;
+      margin-top: 4px;
+      font-size: 12px;
+      color: var(--text-sub);
+    }
+
+    .result-prices b {
+      color: #e2e8f0;
+    }
+
+    .result-diff-pill {
+      margin-top: 5px;
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      font-size: 12px;
+      font-weight: 800;
+      padding: 2px 8px;
+      border-radius: 999px;
+    }
+
+    .result-diff-pill.good {
+      background: var(--emerald-bg);
+      color: #34d399;
+    }
+
+    .result-diff-pill.mid {
+      background: var(--amber-bg);
+      color: #fbbf24;
+    }
+
+    .result-diff-pill.far {
+      background: var(--rose-bg);
+      color: #fb7185;
+    }
+
+    /* Leaderboard Row */
+    .lb-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      background: #0f172a;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 10px 12px;
+      margin-bottom: 8px;
+    }
+
+    .lb-left {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .lb-rank {
+      width: 26px;
+      height: 26px;
+      border-radius: 50%;
+      background: var(--card-elevated);
+      color: #fff;
+      font-size: 12px;
+      font-weight: 800;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .lb-rank.top1 { background: #eab308; color: #000; }
+    .lb-rank.top2 { background: #94a3b8; color: #000; }
+    .lb-rank.top3 { background: #b45309; color: #fff; }
+
+    .lb-name {
+      font-size: 14px;
+      font-weight: 800;
+      color: #fff;
+    }
+
+    .lb-meta {
+      font-size: 11px;
+      color: var(--text-sub);
+    }
+
+    .lb-right {
+      text-align: right;
+    }
+
+    .lb-pts {
+      font-size: 14px;
+      font-weight: 800;
+      color: #34d399;
+    }
+
+    .lb-avg {
+      font-size: 11px;
+      color: var(--text-sub);
+    }
+
+    /* Profile / Login Form Box */
+    .profile-box {
+      background: #0f172a;
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 14px;
+      margin-bottom: 14px;
+    }
+
+    .profile-box h4 {
+      margin: 0 0 8px;
+      font-size: 14px;
+      color: #fff;
+    }
+
+    .form-input {
+      width: 100%;
+      padding: 10px 12px;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      background: #1e293b;
+      color: #fff;
+      font-size: 14px;
+      margin-bottom: 10px;
+    }
+
+    .save-profile-btn {
+      width: 100%;
+      padding: 10px;
+      border-radius: 10px;
+      border: none;
+      background: var(--accent);
+      color: #fff;
+      font-weight: 700;
+      font-size: 14px;
+      cursor: pointer;
+    }
+
+    @keyframes fadeIn {
+      from { opacity: 0; }
+      to { opacity: 1; }
+    }
+
+    @keyframes popScale {
+      from { transform: scale(0.88); opacity: 0; }
+      to { transform: scale(1); opacity: 1; }
+    }
+
+    @keyframes shrinkBar {
+      from { transform: scaleX(1); }
+      to { transform: scaleX(0); }
+    }
+
+    @keyframes slideUp {
+      from { transform: translateY(100%); }
+      to { transform: translateY(0); }
+    }
+  </style>
+</head>
+<body>
+  <div class="phone-frame">
+    <!-- Top Header -->
+    <header class="top-bar">
+      <div class="brand">
+        <span class="brand-icon">🏡</span>
+        <span>ZIPLOW</span>
+      </div>
+      <div class="top-actions">
+        <button class="pill-btn" onclick="openDrawer('leaderboard')" title="View Leaderboard">
+          🏆 <span id="headerScoreText">0 pts</span>
+        </button>
+        <button class="pill-btn" onclick="openDrawer('profile')" title="Player Profile & Login">
+          👤 <span id="headerPlayerName">Guest</span>
+        </button>
+      </div>
+    </header>
+
+    <!-- Main Mobile Game Stack -->
+    <main class="game-stack">
+      <!-- 1. Picture Carousel (scroll for all of them) -->
+      <section class="carousel-wrapper" aria-label="House Photo Carousel">
+        <button class="carousel-nav prev" onclick="scrollCarousel(-1)" aria-label="Previous photo">‹</button>
+        <div class="carousel-track" id="carouselTrack">
+          <!-- Populated dynamically with all house photos -->
+        </div>
+        <button class="carousel-nav next" onclick="scrollCarousel(1)" aria-label="Next photo">›</button>
+        <div class="carousel-badge" id="photoCounterBadge">1 / 1</div>
+        <div class="carousel-hint">Swipe or tap ‹ › to view all photos</div>
+      </section>
+
+      <!-- 2. Locations (City, State) and Sq Feet -->
+      <section class="house-meta-bar" aria-label="House Location and Square Footage">
+        <div class="location-block">
+          <div class="loc-pin">📍</div>
+          <div class="loc-text">
+            <div class="loc-label">Location</div>
+            <div class="loc-city-state" id="houseLocationText">Loading...</div>
+          </div>
+        </div>
+        <div class="sqft-block">
+          <div class="sqft-label">Size</div>
+          <div class="sqft-value" id="houseSqftText">-- sq ft</div>
+        </div>
+      </section>
+
+      <!-- 3. Price Input Box ({###}K default to 500K + Chevron +/-1K), Quick Adjusters (+100K/+50K/+10K/-10K/-50K/-100K), Submit, and Last Results Button -->
+      <section class="controls-card">
+        <div class="price-box-container">
+          <div class="price-box-caption">Your Listed Price Guess (in Thousands)</div>
+          <div class="price-input-row">
+            <div class="price-number-wrap">
+              <span class="currency-prefix">$</span>
+              <input
+                type="number"
+                id="guessInputK"
+                class="price-k-input"
+                value="500"
+                min="1"
+                max="99999"
+                step="1"
+                inputmode="numeric"
+                aria-label="Price guess in thousands"
+              />
+              <span class="k-suffix">K</span>
+            </div>
+            <div class="chevron-col" aria-label="Adjust guess by 1K">
+              <button type="button" class="chevron-btn" onclick="adjustGuessK(1)" title="Add 1K (+1,000)">
+                ▲ +1K
+              </button>
+              <button type="button" class="chevron-btn" onclick="adjustGuessK(-1)" title="Subtract 1K (-1,000)">
+                ▼ -1K
+              </button>
+            </div>
+          </div>
+          <div class="full-dollar-preview" id="fullDollarPreview">= $500,000</div>
+        </div>
+
+        <!-- +100K  +50K  +10K  -10K  -50K  -100K -->
+        <div class="adjust-row">
+          <button type="button" class="adj-btn plus" onclick="adjustGuessK(100)">+100K</button>
+          <button type="button" class="adj-btn plus" onclick="adjustGuessK(50)">+50K</button>
+          <button type="button" class="adj-btn plus" onclick="adjustGuessK(10)">+10K</button>
+          <button type="button" class="adj-btn minus" onclick="adjustGuessK(-10)">-10K</button>
+          <button type="button" class="adj-btn minus" onclick="adjustGuessK(-50)">-50K</button>
+          <button type="button" class="adj-btn minus" onclick="adjustGuessK(-100)">-100K</button>
+        </div>
+
+        <!-- Submit Button -->
+        <button type="button" class="submit-btn" id="submitGuessBtn" onclick="submitGuess()">
+          Submit Guess
+        </button>
+
+        <!-- Modal Button (Last Results) -->
+        <button type="button" class="results-modal-btn" onclick="openDrawer('results')">
+          <span>📊 Last Results</span>
+          <span class="results-count-badge" id="resultsCountBadge">0</span>
+        </button>
+      </section>
+    </main>
+
+    <!-- Answer Popup Modal: Right / Wrong Answer + Percentage Off + Too High / Too Low + House Photo Carousel + Continue Button -->
+    <div class="feedback-overlay" id="feedbackOverlay" role="dialog" aria-modal="true">
+      <div class="feedback-card" id="feedbackCard">
+        <div class="feedback-verdict correct" id="feedbackVerdictBadge">RIGHT ANSWER</div>
+        <div class="feedback-pct-hero good" id="feedbackPctHero">0% OFF</div>
+        <h2 class="feedback-headline" id="feedbackHeadline">You were $0 OFF</h2>
+
+        <!-- Interactive House Photo Carousel inside the Answer Modal -->
+        <div class="modal-carousel-box" aria-label="House Photos in Result Modal">
+          <button type="button" class="carousel-nav prev" onclick="scrollModalCarousel(-1)" aria-label="Previous house photo">‹</button>
+          <div class="modal-carousel-track" id="modalCarouselTrack"></div>
+          <button type="button" class="carousel-nav next" onclick="scrollModalCarousel(1)" aria-label="Next house photo">›</button>
+          <div class="carousel-badge" id="modalPhotoCounterBadge">1 / 1</div>
+          <div class="carousel-hint">Swipe or tap ‹ › to review house photos</div>
+        </div>
+
+        <div class="modal-house-meta">
+          <div class="modal-house-loc" id="feedbackHouseLoc">City, State</div>
+          <div class="modal-house-sqft" id="feedbackHouseSqft">-- sq ft</div>
+        </div>
+
+        <div class="comparison-grid">
+          <div class="comp-box">
+            <div class="comp-label">Your Guess</div>
+            <div class="comp-val" id="feedbackYourGuess">$500,000</div>
+          </div>
+          <div class="comp-box">
+            <div class="comp-label">Listed Price</div>
+            <div class="comp-val actual" id="feedbackActualPrice">$500,000</div>
+          </div>
+        </div>
+
+        <div class="feedback-sub good" id="feedbackSubBadge">+1,000 pts earned</div>
+
+        <button type="button" class="continue-btn" id="continueNextHouseBtn" onclick="continueToNextHouse()">
+          Continue
+        </button>
+      </div>
+    </div>
+
+    <!-- Last Results / Leaderboard / Login Modal Drawer -->
+    <div class="drawer-overlay" id="drawerOverlay" onclick="handleOverlayClick(event)">
+      <div class="drawer-sheet">
+        <div class="drawer-header">
+          <div class="drawer-title" id="drawerTitle">Last Results</div>
+          <button class="close-btn" onclick="closeDrawer()" aria-label="Close modal">✕</button>
+        </div>
+
+        <div class="drawer-tabs">
+          <button class="tab-btn active" id="tabBtnResults" onclick="switchTab('results')">
+            📋 Last Results
+          </button>
+          <button class="tab-btn" id="tabBtnLeaderboard" onclick="switchTab('leaderboard')">
+            🏆 Leaderboard
+          </button>
+          <button class="tab-btn" id="tabBtnProfile" onclick="switchTab('profile')">
+            🔐 Login / DB
+          </button>
+        </div>
+
+        <div class="drawer-body" id="drawerBody">
+          <!-- Tab 1: Last Results -->
+          <div id="tabContentResults">
+            <div class="stats-strip">
+              <div class="stat-tile">
+                <div class="stat-tile-label">Guessed</div>
+                <div class="stat-tile-val" id="statTotalGuesses">0</div>
+              </div>
+              <div class="stat-tile">
+                <div class="stat-tile-label">Avg $ Off</div>
+                <div class="stat-tile-val" id="statAvgOff">$0</div>
+              </div>
+              <div class="stat-tile">
+                <div class="stat-tile-label">Best Guess</div>
+                <div class="stat-tile-val" id="statBestOff">--</div>
+              </div>
+            </div>
+            <div id="resultsListContainer"></div>
+          </div>
+
+          <!-- Tab 2: Leaderboard -->
+          <div id="tabContentLeaderboard" style="display: none;">
+            <div id="leaderboardListContainer"></div>
+          </div>
+
+          <!-- Tab 3: Player Profile / Login & DB Schema Ready -->
+          <div id="tabContentProfile" style="display: none;">
+            <div class="profile-box">
+              <h4>👤 Player Profile & Leaderboard Handle</h4>
+              <p style="font-size: 12px; color: var(--text-sub); margin-top: 0;">
+                Your guesses are saved to the database with your session token and linked to your profile when you sign in.
+              </p>
+              <input
+                type="text"
+                id="profileNameInput"
+                class="form-input"
+                placeholder="Display Name (e.g. HouseWhiz)"
+              />
+              <input
+                type="email"
+                id="profileEmailInput"
+                class="form-input"
+                placeholder="Email (optional — for account login link)"
+              />
+              <button class="save-profile-btn" onclick="savePlayerProfile()">
+                Save Profile & Sync Leaderboard
+              </button>
+              <div id="profileSaveStatus" style="font-size: 12px; margin-top: 8px; color: #34d399;"></div>
+            </div>
+
+            <div class="profile-box">
+              <h4>🗄️ Database Tables Prepared (`43023_ziplow_db`)</h4>
+              <ul style="font-size: 12px; color: var(--text-sub); padding-left: 18px; line-height: 1.6; margin: 0;">
+                <li><b style="color:#e2e8f0;">ncba_user & player_profiles:</b> Auth accounts, guest-to-user merge, streaks, avg $ off, and points.</li>
+                <li><b style="color:#e2e8f0;">game_guesses:</b> Every round's house (`sale_id`, `zpid`, `city`, `state`, `sqft`), `guess_price`, `actual_listed_price`, `abs_diff_dollars` ($ off), `pct_off`, and `price_effective_date`.</li>
+                <li><b style="color:#e2e8f0;">house_price_snapshots:</b> Tracks house price & status by `snapshot_date` as listings change over time.</li>
+                <li><b style="color:#e2e8f0;">leaderboards:</b> Ranked standings (`ALL_TIME`, `DAILY`, `WEEKLY`) by accuracy points & average dollars off.</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // Built-in fallback houses (from 43023_ziplow_db.sales) in case API is loading or offline
+    const FALLBACK_HOUSES = [
+      {
+        id: 1,
+        sale_id: 1,
+        zpid: "72179512",
+        city: "Pueblo West",
+        state: "CO",
+        sqft: 2286,
+        price: 339000,
+        price_effective_date: "2026-10-18",
+        photos: [
+          "https://photos.zillowstatic.com/fp/d47330060c78ca0c0e29317d4155b659-cc_ft_1536.jpg",
+          "https://photos.zillowstatic.com/fp/d3db6fa3d913a51e09829a9c438cb677-cc_ft_1536.jpg",
+          "https://photos.zillowstatic.com/fp/3bb69e7549418029046daac17cae8118-cc_ft_1536.jpg",
+          "https://photos.zillowstatic.com/fp/0fcd8df7e63834315c290bc05d2f2b5c-cc_ft_1536.jpg"
+        ]
+      },
+      {
+        id: 3,
+        sale_id: 3,
+        zpid: "13413883",
+        city: "Denver",
+        state: "CO",
+        sqft: 1302,
+        price: 500000,
+        price_effective_date: "2026-10-18",
+        photos: [
+          "https://photos.zillowstatic.com/fp/dd63ec733c2c06d2378bbbe7299745d2-cc_ft_1536.jpg",
+          "https://photos.zillowstatic.com/fp/8b037e7aa97cda6196fdffb8333c9265-cc_ft_1536.jpg",
+          "https://photos.zillowstatic.com/fp/148489fa22c55861bda4088c9f4a9ccc-cc_ft_1536.jpg"
+        ]
+      },
+      {
+        id: 5,
+        sale_id: 5,
+        zpid: "13493423",
+        city: "Castle Rock",
+        state: "CO",
+        sqft: 1290,
+        price: 470000,
+        price_effective_date: "2026-10-18",
+        photos: [
+          "https://photos.zillowstatic.com/fp/925bc47fc0d8915a48576f2572e3f8e1-cc_ft_1536.jpg",
+          "https://photos.zillowstatic.com/fp/1c43eabd9c9ea8239f981d27aef419d8-cc_ft_1536.jpg",
+          "https://photos.zillowstatic.com/fp/64644b3ee700571f8efde32523dac0e8-cc_ft_1536.jpg",
+          "https://photos.zillowstatic.com/fp/df52927c82c4670d956c7672e99493b6-cc_ft_1536.jpg",
+          "https://photos.zillowstatic.com/fp/80b7c9f9bdb9fe498dad7d1ef15e4842-cc_ft_1536.jpg"
+        ]
+      },
+      {
+        id: 2,
+        sale_id: 2,
+        zpid: "13648070",
+        city: "Monument",
+        state: "CO",
+        sqft: 5953,
+        price: 1099900,
+        price_effective_date: "2026-10-18",
+        photos: [
+          "https://photos.zillowstatic.com/fp/c2893d8affb81182cf0e12c95f80189b-cc_ft_1536.jpg",
+          "https://photos.zillowstatic.com/fp/9b02905cc2eb4736e204a1992d3c47d7-cc_ft_1536.jpg",
+          "https://photos.zillowstatic.com/fp/6477ccebfebc43e82ebaa8a60f614e2e-cc_ft_1536.jpg"
+        ]
+      },
+      {
+        id: 9,
+        sale_id: 9,
+        zpid: "12941443",
+        city: "Brighton",
+        state: "CO",
+        sqft: 2022,
+        price: 420000,
+        price_effective_date: "2026-10-18",
+        photos: [
+          "https://photos.zillowstatic.com/fp/9b61135d0eaedb239c1412b20352c8db-cc_ft_1536.jpg",
+          "https://photos.zillowstatic.com/fp/3dd8f670f1805d17fba018b068df086b-cc_ft_1536.jpg",
+          "https://photos.zillowstatic.com/fp/6eda17c20ce823cacde16d4942286935-cc_ft_1536.jpg"
+        ]
+      },
+      {
+        id: 10,
+        sale_id: 10,
+        zpid: "12954539",
+        city: "Thornton",
+        state: "CO",
+        sqft: 4375,
+        price: 739900,
+        price_effective_date: "2026-10-18",
+        photos: [
+          "https://photos.zillowstatic.com/fp/73543fe9cdcf714e3bc54d513f6a915a-cc_ft_1536.jpg",
+          "https://photos.zillowstatic.com/fp/92bed1ae962b833df313c2afb22affa3-cc_ft_1536.jpg",
+          "https://photos.zillowstatic.com/fp/a0c3b88a8224937f61878e51540e3330-cc_ft_1536.jpg"
+        ]
+      }
+    ];
+
+    // State
+    let housesQueue = [];
+    let currentHouseIndex = 0;
+    let currentPhotoIndex = 0;
+    let isPopupActive = false;
+    let popupTimeoutId = null;
+
+    // Player Identity & Results History
+    let guestToken = localStorage.getItem('ziplow_guest_token');
+    if (!guestToken) {
+      guestToken = 'zp_' + Math.random().toString(36).slice(2, 10) + '_' + Date.now().toString(36);
+      localStorage.setItem('ziplow_guest_token', guestToken);
+    }
+
+    let playerName = localStorage.getItem('ziplow_player_name') || 'Guest Player';
+    let playerEmail = localStorage.getItem('ziplow_player_email') || '';
+    let localResults = [];
+    try {
+      localResults = JSON.parse(localStorage.getItem('ziplow_last_results') || '[]');
+    } catch {
+      localResults = [];
+    }
+
+    // DOM Elements
+    const carouselTrack = document.getElementById('carouselTrack');
+    const photoCounterBadge = document.getElementById('photoCounterBadge');
+    const houseLocationText = document.getElementById('houseLocationText');
+    const houseSqftText = document.getElementById('houseSqftText');
+    const guessInputK = document.getElementById('guessInputK');
+    const fullDollarPreview = document.getElementById('fullDollarPreview');
+    const submitGuessBtn = document.getElementById('submitGuessBtn');
+    const resultsCountBadge = document.getElementById('resultsCountBadge');
+    const headerScoreText = document.getElementById('headerScoreText');
+    const headerPlayerName = document.getElementById('headerPlayerName');
+
+    // Formatters
+    function formatDollars(num) {
+      const n = Math.round(Number(num) || 0);
+      return '$' + n.toLocaleString('en-US');
+    }
+
+    function updateFullDollarPreview() {
+      const rawVal = parseInt(guessInputK.value, 10);
+      if (isNaN(rawVal) || rawVal <= 0) {
+        fullDollarPreview.textContent = '= $0';
+        return;
+      }
+      fullDollarPreview.textContent = '= ' + formatDollars(rawVal * 1000);
+    }
+
+    guessInputK.addEventListener('input', updateFullDollarPreview);
+    guessInputK.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        submitGuess();
+      }
+    });
+
+    // Quick +100K, +50K, +10K, -10K, -50K, -100K and Chevron +1K / -1K buttons
+    function adjustGuessK(deltaK) {
+      if (isPopupActive) return;
+      const currentVal = parseInt(guessInputK.value, 10) || 0;
+      const nextVal = Math.max(1, currentVal + deltaK);
+      guessInputK.value = String(nextVal);
+      updateFullDollarPreview();
+    }
+
+    // Carousel scroll tracking & navigation
+    carouselTrack.addEventListener('scroll', () => {
+      const width = carouselTrack.clientWidth;
+      if (!width) return;
+      const idx = Math.round(carouselTrack.scrollLeft / width);
+      const house = housesQueue[currentHouseIndex];
+      const total = house?.photos?.length || 1;
+      currentPhotoIndex = Math.min(Math.max(idx, 0), total - 1);
+      photoCounterBadge.textContent = `${currentPhotoIndex + 1} / ${total}`;
+    });
+
+    function scrollCarousel(direction) {
+      const house = housesQueue[currentHouseIndex];
+      const total = house?.photos?.length || 1;
+      if (total <= 1) return;
+      let nextIdx = currentPhotoIndex + direction;
+      if (nextIdx < 0) nextIdx = total - 1;
+      if (nextIdx >= total) nextIdx = 0;
+      currentPhotoIndex = nextIdx;
+      carouselTrack.scrollTo({
+        left: nextIdx * carouselTrack.clientWidth,
+        behavior: 'smooth'
+      });
+      photoCounterBadge.textContent = `${currentPhotoIndex + 1} / ${total}`;
+    }
+
+    // Render current house onto the screen
+    function renderCurrentHouse() {
+      const house = housesQueue[currentHouseIndex];
+      if (!house) return;
+
+      const photos = (Array.isArray(house.photos) && house.photos.length > 0)
+        ? house.photos
+        : [house.image_url].filter(Boolean);
+
+      currentPhotoIndex = 0;
+      carouselTrack.innerHTML = photos
+        .map((url, idx) => `
+          <div class="carousel-slide">
+            <img src="${url}" alt="House photo ${idx + 1} in ${house.city}, ${house.state}" loading="${idx < 2 ? 'eager' : 'lazy'}" />
+          </div>
+        `)
+        .join('');
+
+      carouselTrack.scrollLeft = 0;
+      photoCounterBadge.textContent = `1 / ${photos.length}`;
+
+      houseLocationText.textContent = `${house.city}, ${house.state}`;
+      houseSqftText.textContent = `${Number(house.sqft || 0).toLocaleString('en-US')} sq ft`;
+
+      // Default input box to 500K for every new house listing
+      guessInputK.value = '500';
+      updateFullDollarPreview();
+    }
+
+    function shuffleArray(arr) {
+      const copy = [...arr];
+      for (let i = copy.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [copy[i], copy[j]] = [copy[j], copy[i]];
+      }
+      return copy;
+    }
+
+    function getSeenHouseIds() {
+      try {
+        return new Set(JSON.parse(sessionStorage.getItem('ziplow_seen_ids') || '[]'));
+      } catch {
+        return new Set();
+      }
+    }
+
+    function markHouseSeen(house) {
+      if (!house) return;
+      const key = String(house.zpid || house.sale_id || house.id || '');
+      if (!key) return;
+      const seen = getSeenHouseIds();
+      seen.add(key);
+      const arr = [...seen].slice(-250);
+      try {
+        sessionStorage.setItem('ziplow_seen_ids', JSON.stringify(arr));
+      } catch {}
+    }
+
+    let cachedStaticCatalog = null;
+
+    // Fetch randomized houses from backend API (/api/game/houses) or static GitHub Pages catalog (./houses.json)
+    async function fetchMoreHouses() {
+      try {
+        const res = await fetch(`/api/game/houses?limit=35&_t=${Date.now()}`);
+        if (!res.ok) throw new Error('API status ' + res.status);
+        const data = await res.json();
+        if (data.ok && Array.isArray(data.houses) && data.houses.length > 0) {
+          enqueueFreshHouses(data.houses);
+          return;
+        }
+      } catch (err) {
+        // Fallback to static nationwide catalog (./houses.json) on GitHub Pages
+        try {
+          if (!cachedStaticCatalog) {
+            const staticRes = await fetch('./houses.json');
+            if (staticRes.ok) {
+              const staticData = await staticRes.json();
+              if (Array.isArray(staticData.houses) && staticData.houses.length > 0) {
+                cachedStaticCatalog = staticData.houses;
+              }
+            }
+          }
+          if (cachedStaticCatalog && cachedStaticCatalog.length > 0) {
+            enqueueFreshHouses(shuffleArray(cachedStaticCatalog).slice(0, 45));
+            return;
+          }
+        } catch (staticErr) {
+          console.warn('Static catalog fallback:', staticErr.message);
+        }
+      }
+
+      if (housesQueue.length === 0) {
+        housesQueue = shuffleArray(FALLBACK_HOUSES);
+      }
+    }
+
+    function enqueueFreshHouses(candidates) {
+      const seenIds = getSeenHouseIds();
+      const queuedIds = new Set(housesQueue.map((h) => String(h.zpid || h.sale_id || h.id)));
+      const fresh = shuffleArray(candidates).filter((h) => {
+        const k = String(h.zpid || h.sale_id || h.id);
+        return !queuedIds.has(k) && !seenIds.has(k);
+      });
+      const toAdd = fresh.length > 0
+        ? fresh
+        : shuffleArray(candidates).filter((h) => !queuedIds.has(String(h.zpid || h.sale_id || h.id)));
+      housesQueue.push(...(toAdd.length > 0 ? toAdd : shuffleArray(candidates)));
+    }
+
+    // Submit Guess -> Show Answer Modal -> Advance when player clicks Continue
+    function submitGuess() {
+      if (isPopupActive) return;
+      const house = housesQueue[currentHouseIndex];
+      if (!house) return;
+
+      markHouseSeen(house);
+
+      let guessK = parseInt(guessInputK.value, 10);
+      if (isNaN(guessK) || guessK <= 0) {
+        guessK = 500;
+        guessInputK.value = '500';
+        updateFullDollarPreview();
+      }
+
+      const guessPrice = guessK * 1000;
+      const actualPrice = Number(house.price) || 500000;
+      const diffDollars = guessPrice - actualPrice;
+      const absDiffDollars = Math.abs(diffDollars);
+      const pctOff = Math.round((absDiffDollars / actualPrice) * 100);
+      const direction = diffDollars === 0 ? 'EXACT' : (diffDollars > 0 ? 'OVER' : 'UNDER');
+      const pointsEarned = Math.max(0, Math.round(1000 * Math.pow(Math.max(0, 1 - Math.min(pctOff, 100) / 100), 1.3)));
+
+      const resultEntry = {
+        id: Date.now(),
+        sale_id: house.sale_id || house.id,
+        zpid: house.zpid,
+        city: house.city,
+        state: house.state,
+        sqft: house.sqft,
+        image_url: (house.photos && house.photos[0]) || house.image_url || '',
+        guess_thousands: guessK,
+        guess_price: guessPrice,
+        actual_listed_price: actualPrice,
+        diff_dollars: diffDollars,
+        abs_diff_dollars: absDiffDollars,
+        pct_off: pctOff,
+        direction,
+        points_earned: pointsEarned,
+        price_effective_date: house.price_effective_date || new Date().toISOString().slice(0, 10),
+        guessed_at: new Date().toISOString(),
+      };
+
+      // Save locally immediately
+      localResults.unshift(resultEntry);
+      if (localResults.length > 50) localResults = localResults.slice(0, 50);
+      localStorage.setItem('ziplow_last_results', JSON.stringify(localResults));
+      updateHeaderAndStats();
+
+      // Persist asynchronously to NoCodeBackend (`game_guesses`, `player_profiles`, `leaderboards`)
+      fetch('/api/game/guess', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ...resultEntry,
+          guest_token: guestToken,
+          player_name: playerName,
+        }),
+      }).catch((err) => console.warn('Background guess sync error:', err.message));
+
+      // Open the Answer Modal (stays open until player clicks Continue)
+      showAnswerFeedbackModal(resultEntry);
+    }
+
+    let modalPhotoIndex = 0;
+    const modalCarouselTrack = document.getElementById('modalCarouselTrack');
+    const modalPhotoCounterBadge = document.getElementById('modalPhotoCounterBadge');
+
+    modalCarouselTrack.addEventListener('scroll', () => {
+      const width = modalCarouselTrack.clientWidth;
+      if (!width) return;
+      const idx = Math.round(modalCarouselTrack.scrollLeft / width);
+      const house = housesQueue[currentHouseIndex];
+      const total = house?.photos?.length || 1;
+      modalPhotoIndex = Math.min(Math.max(idx, 0), total - 1);
+      modalPhotoCounterBadge.textContent = `${modalPhotoIndex + 1} / ${total}`;
+    });
+
+    function scrollModalCarousel(direction) {
+      const house = housesQueue[currentHouseIndex];
+      const total = house?.photos?.length || 1;
+      if (total <= 1) return;
+      let nextIdx = modalPhotoIndex + direction;
+      if (nextIdx < 0) nextIdx = total - 1;
+      if (nextIdx >= total) nextIdx = 0;
+      modalPhotoIndex = nextIdx;
+      modalCarouselTrack.scrollTo({
+        left: nextIdx * modalCarouselTrack.clientWidth,
+        behavior: 'smooth'
+      });
+      modalPhotoCounterBadge.textContent = `${modalPhotoIndex + 1} / ${total}`;
+    }
+
+    function showAnswerFeedbackModal(entry) {
+      isPopupActive = true;
+      submitGuessBtn.disabled = true;
+
+      const overlay = document.getElementById('feedbackOverlay');
+      const cardEl = document.getElementById('feedbackCard');
+      const verdictBadgeEl = document.getElementById('feedbackVerdictBadge');
+      const pctHeroEl = document.getElementById('feedbackPctHero');
+      const headlineEl = document.getElementById('feedbackHeadline');
+      const subBadgeEl = document.getElementById('feedbackSubBadge');
+      const yourGuessEl = document.getElementById('feedbackYourGuess');
+      const actualPriceEl = document.getElementById('feedbackActualPrice');
+      const houseLocEl = document.getElementById('feedbackHouseLoc');
+      const houseSqftEl = document.getElementById('feedbackHouseSqft');
+
+      // Populate full house photo carousel inside the Right/Wrong Answer modal
+      const activeHouse = housesQueue[currentHouseIndex];
+      const photos = (Array.isArray(activeHouse?.photos) && activeHouse.photos.length > 0)
+        ? activeHouse.photos
+        : [entry.image_url].filter(Boolean);
+
+      modalPhotoIndex = 0;
+      modalCarouselTrack.innerHTML = photos
+        .map((url, idx) => `
+          <div class="carousel-slide">
+            <img src="${url}" alt="House photo ${idx + 1} in ${entry.city}, ${entry.state}" loading="${idx < 3 ? 'eager' : 'lazy'}" />
+          </div>
+        `)
+        .join('');
+
+      modalPhotoCounterBadge.textContent = `1 / ${photos.length}`;
+      houseLocEl.textContent = `${entry.city}, ${entry.state}`;
+      houseSqftEl.textContent = `${Number(entry.sqft || 0).toLocaleString('en-US')} sq ft`;
+
+      // Determine Right vs Wrong Answer (exact match in thousands or within 5% tolerance) — no emojis
+      const roundedPct = Math.round(Number(entry.pct_off) || 0);
+      const isCorrect = entry.abs_diff_dollars === 0 || roundedPct <= 5;
+      const toneClass = isCorrect ? 'good' : (roundedPct <= 20 ? 'mid' : 'far');
+
+      cardEl.className = 'feedback-card ' + (isCorrect ? 'correct' : 'incorrect');
+      verdictBadgeEl.className = 'feedback-verdict ' + (isCorrect ? 'correct' : 'incorrect');
+      verdictBadgeEl.textContent = isCorrect ? 'RIGHT ANSWER' : 'WRONG ANSWER';
+
+      // Prominent Percentage Too High / Too Low & Dollar Too High / Too Low headline (no emojis)
+      pctHeroEl.className = 'feedback-pct-hero ' + toneClass;
+
+      if (entry.direction === 'EXACT') {
+        pctHeroEl.textContent = '0% EXACT';
+        headlineEl.textContent = 'You were $0 TOO HIGH OR LOW';
+      } else if (entry.direction === 'OVER') {
+        pctHeroEl.textContent = `${roundedPct}% TOO HIGH`;
+        headlineEl.textContent = `You were ${formatDollars(entry.abs_diff_dollars)} TOO HIGH`;
+      } else {
+        pctHeroEl.textContent = `${roundedPct}% TOO LOW`;
+        headlineEl.textContent = `You were ${formatDollars(entry.abs_diff_dollars)} TOO LOW`;
+      }
+
+      yourGuessEl.textContent = formatDollars(entry.guess_price);
+      actualPriceEl.textContent = formatDollars(entry.actual_listed_price);
+
+      subBadgeEl.textContent = `+${entry.points_earned.toLocaleString()} pts earned`;
+      subBadgeEl.className = 'feedback-sub ' + toneClass;
+
+      overlay.classList.add('active');
+      requestAnimationFrame(() => {
+        modalCarouselTrack.scrollLeft = 0;
+      });
+    }
+
+    function continueToNextHouse() {
+      const overlay = document.getElementById('feedbackOverlay');
+      overlay.classList.remove('active');
+      isPopupActive = false;
+      submitGuessBtn.disabled = false;
+
+      currentHouseIndex++;
+      if (currentHouseIndex >= housesQueue.length - 4) {
+        fetchMoreHouses();
+      }
+      if (currentHouseIndex >= housesQueue.length) {
+        currentHouseIndex = 0;
+      }
+      renderCurrentHouse();
+    }
+
+    // Update header badges and Last Results list
+    function updateHeaderAndStats() {
+      const count = localResults.length;
+      resultsCountBadge.textContent = String(count);
+      headerPlayerName.textContent = playerName === 'Guest Player' ? 'Guest' : playerName.slice(0, 12);
+
+      const totalPoints = localResults.reduce((acc, r) => acc + (Number(r.points_earned) || 0), 0);
+      headerScoreText.textContent = `${totalPoints.toLocaleString()} pts`;
+
+      document.getElementById('statTotalGuesses').textContent = String(count);
+      if (count > 0) {
+        const totalOff = localResults.reduce((acc, r) => acc + (Number(r.abs_diff_dollars) || 0), 0);
+        const avgOff = Math.round(totalOff / count);
+        const bestOff = Math.min(...localResults.map((r) => Number(r.abs_diff_dollars) || 0));
+        document.getElementById('statAvgOff').textContent = formatDollars(avgOff);
+        document.getElementById('statBestOff').textContent = formatDollars(bestOff);
+      } else {
+        document.getElementById('statAvgOff').textContent = '$0';
+        document.getElementById('statBestOff').textContent = '--';
+      }
+
+      renderResultsList();
+    }
+
+    function renderResultsList() {
+      const container = document.getElementById('resultsListContainer');
+      if (localResults.length === 0) {
+        container.innerHTML = `
+          <div style="text-align:center; padding: 30px 10px; color: var(--text-sub); font-size: 14px;">
+            No guesses yet! Guess a house price and tap <b>Submit Guess</b> to see your results here.
+          </div>
+        `;
+        return;
+      }
+
+      container.innerHTML = localResults
+        .map((r) => {
+          const pct = Math.round(Number(r.pct_off) || 0);
+          const badgeClass = pct <= 10 ? 'good' : (pct <= 25 ? 'mid' : 'far');
+          const dirLabel = r.direction === 'OVER' ? 'TOO HIGH' : 'TOO LOW';
+          const signText = r.direction === 'EXACT'
+            ? 'Spot On! (0%)'
+            : `${ pct }% ${dirLabel} (${formatDollars(r.abs_diff_dollars)} ${dirLabel})`;
+          return `
+            <div class="result-item">
+              <img class="result-thumb" src="${r.image_url}" alt="${r.city}, ${r.state}" />
+              <div class="result-info">
+                <div class="result-loc">
+                  <span>${r.city}, ${r.state}</span>
+                  <span class="result-sqft">${Number(r.sqft || 0).toLocaleString()} sq ft</span>
+                </div>
+                <div class="result-prices">
+                  <span>Guess: <b>${formatDollars(r.guess_price)}</b></span>
+                  <span>Listed: <b>${formatDollars(r.actual_listed_price)}</b></span>
+                </div>
+                <div class="result-diff-pill ${badgeClass}">
+                  ${signText} • +${r.points_earned || 0} pts
+                </div>
+              </div>
+            </div>
+          `;
+        })
+        .join('');
+    }
+
+    function renderLeaderboardRows(rows) {
+      const container = document.getElementById('leaderboardListContainer');
+      container.innerHTML = rows
+        .map((row, idx) => {
+          const rankClass = idx === 0 ? 'top1' : (idx === 1 ? 'top2' : (idx === 2 ? 'top3' : ''));
+          const isMe = row.guest_token === guestToken;
+          return `
+            <div class="lb-row" style="${isMe ? 'border-color: #3b82f6; background: rgba(59,130,246,0.12);' : ''}">
+              <div class="lb-left">
+                <div class="lb-rank ${rankClass}">${idx + 1}</div>
+                <div>
+                  <div class="lb-name">${row.display_name}${isMe ? ' (You)' : ''}</div>
+                  <div class="lb-meta">${row.guesses_count} houses guessed • Best: ${formatDollars(row.closest_diff_dollars || 0)} off</div>
+                </div>
+              </div>
+              <div class="lb-right">
+                <div class="lb-pts">${Number(row.total_points || 0).toLocaleString()} pts</div>
+                <div class="lb-avg">Avg ${formatDollars(row.avg_abs_diff_dollars || 0)} off</div>
+              </div>
+            </div>
+          `;
+        })
+        .join('');
+    }
+
+    async function loadLeaderboard() {
+      const container = document.getElementById('leaderboardListContainer');
+      container.innerHTML = `<div style="text-align:center; padding: 20px; color: var(--text-sub);">Loading leaderboard...</div>`;
+      try {
+        const res = await fetch('/api/game/leaderboard');
+        const data = await res.json();
+        if (data.ok && Array.isArray(data.leaderboard) && data.leaderboard.length > 0) {
+          renderLeaderboardRows(data.leaderboard);
+          return;
+        }
+      } catch (err) {
+        // Fallback leaderboard for static GitHub Pages deployment
+      }
+      const fallbackRows = [
+        { guest_token: 'bot_1', display_name: 'DenverValuer', guesses_count: 14, closest_diff_dollars: 1000, avg_abs_diff_dollars: 18500, total_points: 11840 },
+        { guest_token: 'bot_2', display_name: 'ZestimatePro', guesses_count: 11, closest_diff_dollars: 2500, avg_abs_diff_dollars: 24200, total_points: 9120 },
+        { guest_token: 'bot_3', display_name: 'MileHighRealtor', guesses_count: 8, closest_diff_dollars: 4000, avg_abs_diff_dollars: 31000, total_points: 6540 },
+      ];
+      if (localResults.length > 0) {
+        const myPoints = localResults.reduce((acc, r) => acc + (Number(r.points_earned) || 0), 0);
+        const myTotalOff = localResults.reduce((acc, r) => acc + (Number(r.abs_diff_dollars) || 0), 0);
+        const myAvgOff = Math.round(myTotalOff / localResults.length);
+        const myBestOff = Math.min(...localResults.map((r) => Number(r.abs_diff_dollars) || 0));
+        fallbackRows.push({
+          guest_token: guestToken,
+          display_name: playerName,
+          guesses_count: localResults.length,
+          closest_diff_dollars: myBestOff,
+          avg_abs_diff_dollars: myAvgOff,
+          total_points: myPoints,
+        });
+      }
+      fallbackRows.sort((a, b) => b.total_points - a.total_points);
+      renderLeaderboardRows(fallbackRows);
+    }
+
+    async function savePlayerProfile() {
+      const nameInput = document.getElementById('profileNameInput');
+      const emailInput = document.getElementById('profileEmailInput');
+      const statusEl = document.getElementById('profileSaveStatus');
+
+      const newName = nameInput.value.trim() || 'Guest Player';
+      const newEmail = emailInput.value.trim();
+
+      playerName = newName;
+      playerEmail = newEmail;
+      localStorage.setItem('ziplow_player_name', playerName);
+      localStorage.setItem('ziplow_player_email', playerEmail);
+      updateHeaderAndStats();
+
+      statusEl.textContent = 'Saving to database...';
+      try {
+        const res = await fetch('/api/game/player', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            guest_token: guestToken,
+            display_name: playerName,
+            email: playerEmail || undefined,
+          }),
+        });
+        const data = await res.json();
+        if (data.ok) {
+          statusEl.textContent = '✅ Profile synced to database & leaderboard!';
+        } else {
+          statusEl.textContent = '✅ Saved locally!';
+        }
+      } catch {
+        statusEl.textContent = '✅ Saved locally!';
+      }
+    }
+
+    // Modal Drawer Controls
+    function openDrawer(tab = 'results') {
+      document.getElementById('profileNameInput').value = playerName === 'Guest Player' ? '' : playerName;
+      document.getElementById('profileEmailInput').value = playerEmail;
+      document.getElementById('drawerOverlay').classList.add('open');
+      switchTab(tab);
+    }
+
+    function closeDrawer() {
+      document.getElementById('drawerOverlay').classList.remove('open');
+    }
+
+    function handleOverlayClick(e) {
+      if (e.target.id === 'drawerOverlay') {
+        closeDrawer();
+      }
+    }
+
+    function switchTab(tab) {
+      document.getElementById('tabBtnResults').classList.toggle('active', tab === 'results');
+      document.getElementById('tabBtnLeaderboard').classList.toggle('active', tab === 'leaderboard');
+      document.getElementById('tabBtnProfile').classList.toggle('active', tab === 'profile');
+
+      document.getElementById('tabContentResults').style.display = tab === 'results' ? 'block' : 'none';
+      document.getElementById('tabContentLeaderboard').style.display = tab === 'leaderboard' ? 'block' : 'none';
+      document.getElementById('tabContentProfile').style.display = tab === 'profile' ? 'none' : 'none';
+      if (tab === 'profile') document.getElementById('tabContentProfile').style.display = 'block';
+
+      const titles = {
+        results: 'Last Results (House vs Guess vs Off)',
+        leaderboard: 'Leaderboard Standings',
+        profile: 'Player Login & Database Prep',
+      };
+      document.getElementById('drawerTitle').textContent = titles[tab] || 'Last Results';
+
+      if (tab === 'results') {
+        updateHeaderAndStats();
+      } else if (tab === 'leaderboard') {
+        loadLeaderboard();
+      }
+    }
+
+    // Initialize Game Prototype
+    async function initGame() {
+      updateHeaderAndStats();
+      await fetchMoreHouses();
+      currentHouseIndex = 0;
+      renderCurrentHouse();
+    }
+
+    initGame();
+  </script>
+</body>
+</html>

@@ -1581,32 +1581,55 @@
       } catch {}
     }
 
-    // Fetch randomized houses from backend API (/api/game/houses) across diverse states & IDs
+    let cachedStaticCatalog = null;
+
+    // Fetch randomized houses from backend API (/api/game/houses) or static GitHub Pages catalog (./houses.json)
     async function fetchMoreHouses() {
       try {
         const res = await fetch(`/api/game/houses?limit=35&_t=${Date.now()}`);
         if (!res.ok) throw new Error('API status ' + res.status);
         const data = await res.json();
         if (data.ok && Array.isArray(data.houses) && data.houses.length > 0) {
-          const seenIds = getSeenHouseIds();
-          const queuedIds = new Set(housesQueue.map((h) => String(h.zpid || h.sale_id || h.id)));
-          const fresh = shuffleArray(data.houses).filter((h) => {
-            const k = String(h.zpid || h.sale_id || h.id);
-            return !queuedIds.has(k) && !seenIds.has(k);
-          });
-          const toAdd = fresh.length > 0
-            ? fresh
-            : shuffleArray(data.houses).filter((h) => !queuedIds.has(String(h.zpid || h.sale_id || h.id)));
-          housesQueue.push(...(toAdd.length > 0 ? toAdd : shuffleArray(data.houses)));
+          enqueueFreshHouses(data.houses);
           return;
         }
       } catch (err) {
-        console.warn('Using fallback houses:', err.message);
+        // Fallback to static nationwide catalog (./houses.json) on GitHub Pages
+        try {
+          if (!cachedStaticCatalog) {
+            const staticRes = await fetch('./houses.json');
+            if (staticRes.ok) {
+              const staticData = await staticRes.json();
+              if (Array.isArray(staticData.houses) && staticData.houses.length > 0) {
+                cachedStaticCatalog = staticData.houses;
+              }
+            }
+          }
+          if (cachedStaticCatalog && cachedStaticCatalog.length > 0) {
+            enqueueFreshHouses(shuffleArray(cachedStaticCatalog).slice(0, 45));
+            return;
+          }
+        } catch (staticErr) {
+          console.warn('Static catalog fallback:', staticErr.message);
+        }
       }
 
       if (housesQueue.length === 0) {
         housesQueue = shuffleArray(FALLBACK_HOUSES);
       }
+    }
+
+    function enqueueFreshHouses(candidates) {
+      const seenIds = getSeenHouseIds();
+      const queuedIds = new Set(housesQueue.map((h) => String(h.zpid || h.sale_id || h.id)));
+      const fresh = shuffleArray(candidates).filter((h) => {
+        const k = String(h.zpid || h.sale_id || h.id);
+        return !queuedIds.has(k) && !seenIds.has(k);
+      });
+      const toAdd = fresh.length > 0
+        ? fresh
+        : shuffleArray(candidates).filter((h) => !queuedIds.has(String(h.zpid || h.sale_id || h.id)));
+      housesQueue.push(...(toAdd.length > 0 ? toAdd : shuffleArray(candidates)));
     }
 
     // Submit Guess -> Show Answer Modal -> Advance when player clicks Continue
@@ -1852,6 +1875,31 @@
         .join('');
     }
 
+    function renderLeaderboardRows(rows) {
+      const container = document.getElementById('leaderboardListContainer');
+      container.innerHTML = rows
+        .map((row, idx) => {
+          const rankClass = idx === 0 ? 'top1' : (idx === 1 ? 'top2' : (idx === 2 ? 'top3' : ''));
+          const isMe = row.guest_token === guestToken;
+          return `
+            <div class="lb-row" style="${isMe ? 'border-color: #3b82f6; background: rgba(59,130,246,0.12);' : ''}">
+              <div class="lb-left">
+                <div class="lb-rank ${rankClass}">${idx + 1}</div>
+                <div>
+                  <div class="lb-name">${row.display_name}${isMe ? ' (You)' : ''}</div>
+                  <div class="lb-meta">${row.guesses_count} houses guessed • Best: ${formatDollars(row.closest_diff_dollars || 0)} off</div>
+                </div>
+              </div>
+              <div class="lb-right">
+                <div class="lb-pts">${Number(row.total_points || 0).toLocaleString()} pts</div>
+                <div class="lb-avg">Avg ${formatDollars(row.avg_abs_diff_dollars || 0)} off</div>
+              </div>
+            </div>
+          `;
+        })
+        .join('');
+    }
+
     async function loadLeaderboard() {
       const container = document.getElementById('leaderboardListContainer');
       container.innerHTML = `<div style="text-align:center; padding: 20px; color: var(--text-sub);">Loading leaderboard...</div>`;
@@ -1859,33 +1907,33 @@
         const res = await fetch('/api/game/leaderboard');
         const data = await res.json();
         if (data.ok && Array.isArray(data.leaderboard) && data.leaderboard.length > 0) {
-          container.innerHTML = data.leaderboard
-            .map((row, idx) => {
-              const rankClass = idx === 0 ? 'top1' : (idx === 1 ? 'top2' : (idx === 2 ? 'top3' : ''));
-              const isMe = row.guest_token === guestToken;
-              return `
-                <div class="lb-row" style="${isMe ? 'border-color: #3b82f6; background: rgba(59,130,246,0.12);' : ''}">
-                  <div class="lb-left">
-                    <div class="lb-rank ${rankClass}">${idx + 1}</div>
-                    <div>
-                      <div class="lb-name">${row.display_name}${isMe ? ' (You)' : ''}</div>
-                      <div class="lb-meta">${row.guesses_count} houses guessed • Best: ${formatDollars(row.closest_diff_dollars || 0)} off</div>
-                    </div>
-                  </div>
-                  <div class="lb-right">
-                    <div class="lb-pts">${Number(row.total_points || 0).toLocaleString()} pts</div>
-                    <div class="lb-avg">Avg ${formatDollars(row.avg_abs_diff_dollars || 0)} off</div>
-                  </div>
-                </div>
-              `;
-            })
-            .join('');
+          renderLeaderboardRows(data.leaderboard);
           return;
         }
       } catch (err) {
-        console.warn('Leaderboard load error:', err.message);
+        // Fallback leaderboard for static GitHub Pages deployment
       }
-      container.innerHTML = `<div style="text-align:center; padding: 20px; color: var(--text-sub);">Submit a guess to join the leaderboard!</div>`;
+      const fallbackRows = [
+        { guest_token: 'bot_1', display_name: 'DenverValuer', guesses_count: 14, closest_diff_dollars: 1000, avg_abs_diff_dollars: 18500, total_points: 11840 },
+        { guest_token: 'bot_2', display_name: 'ZestimatePro', guesses_count: 11, closest_diff_dollars: 2500, avg_abs_diff_dollars: 24200, total_points: 9120 },
+        { guest_token: 'bot_3', display_name: 'MileHighRealtor', guesses_count: 8, closest_diff_dollars: 4000, avg_abs_diff_dollars: 31000, total_points: 6540 },
+      ];
+      if (localResults.length > 0) {
+        const myPoints = localResults.reduce((acc, r) => acc + (Number(r.points_earned) || 0), 0);
+        const myTotalOff = localResults.reduce((acc, r) => acc + (Number(r.abs_diff_dollars) || 0), 0);
+        const myAvgOff = Math.round(myTotalOff / localResults.length);
+        const myBestOff = Math.min(...localResults.map((r) => Number(r.abs_diff_dollars) || 0));
+        fallbackRows.push({
+          guest_token: guestToken,
+          display_name: playerName,
+          guesses_count: localResults.length,
+          closest_diff_dollars: myBestOff,
+          avg_abs_diff_dollars: myAvgOff,
+          total_points: myPoints,
+        });
+      }
+      fallbackRows.sort((a, b) => b.total_points - a.total_points);
+      renderLeaderboardRows(fallbackRows);
     }
 
     async function savePlayerProfile() {
