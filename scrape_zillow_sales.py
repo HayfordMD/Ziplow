@@ -272,31 +272,362 @@ class ZillowSalesScraper(ZillowColoradoScraper):
             "scraped_at": now_str,
         }
 
-    def fetch_map_results_put(
-        self, query_state: Dict[str, Any], referer: str, request_id: int = 2
-    ) -> List[Dict[str, Any]]:
-        """Calls PUT /async-create-search-page-state to retrieve up to 500 mapResults + 41 listResults."""
-        payload = {
-            "searchQueryState": query_state,
-            "wants": {"cat1": ["listResults", "mapResults"]},
-            "requestId": request_id,
-        }
+    _shared_csrf_token: Optional[str] = None
+
+    def get_graphql_csrf(self) -> str:
+        """Fetches and caches an x-csrf-token from Zillow Group's Trulia web frontend."""
+        if ZillowSalesScraper._shared_csrf_token:
+            return ZillowSalesScraper._shared_csrf_token
         try:
-            resp = self.session.put(
-                "https://www.zillow.com/async-create-search-page-state",
-                json=payload,
-                headers={"Content-Type": "application/json", "Referer": referer},
-                timeout=25,
+            resp = self.session.get("https://www.trulia.com/CA/", timeout=20)
+            m = re.search(
+                r'<script id="__NEXT_DATA__" type="application/json">(.*?)</script>',
+                resp.text,
             )
-            if resp.status_code != 200:
-                return []
-            data = resp.json()
-            sr = data.get("cat1", {}).get("searchResults", {})
-            # Put listResults first (since they have multi-photo carousels) followed by mapResults
-            return (sr.get("listResults") or []) + (sr.get("mapResults") or [])
+            if m:
+                d = json.loads(m.group(1))
+                tok = (
+                    d.get("props", {})
+                    .get("__TRULIA_HYDRATION_INTERNAL__", {})
+                    .get("headers", {})
+                    .get("x-csrf-token")
+                )
+                if tok:
+                    ZillowSalesScraper._shared_csrf_token = tok
+                    return tok
         except Exception as exc:
-            print(f"  [!] PUT async-create-search-page-state error: {exc}")
-            return []
+            print(f"  [!] Warning fetching GraphQL CSRF token: {exc}")
+        return ""
+
+    def parse_graphql_home(
+        self, home: Dict[str, Any], category: str = "FOR_SALE", default_state: str = "CO"
+    ) -> Dict[str, Any]:
+        """Maps a HOME_Property from searchHomesByDetails into the 75-column sales schema."""
+        t_map: Dict[str, str] = {}
+        for item in home.get("tracking") or []:
+            if isinstance(item, dict) and item.get("key"):
+                t_map[str(item["key"])] = str(item.get("value") or "")
+
+        eight_bit: Dict[str, str] = {}
+        for part in t_map.get("item", "").split(";"):
+            if "eightBitItem|traditional:" in part:
+                kv = part.split("eightBitItem|traditional:", 1)[-1]
+                if ":" in kv:
+                    k, v = kv.split(":", 1)
+                    eight_bit[k.strip()] = v.strip()
+
+        typed_id = str(home.get("typedHomeId") or "")
+        zpid = t_map.get("zPID") or typed_id.replace("_ZPID", "").strip()
+
+        raw_url = str(home.get("url") or "")
+        if raw_url.startswith("/home/"):
+            slug = raw_url[len("/home/") :].strip("/")
+            if zpid and slug.endswith(f"-{zpid}"):
+                slug = slug[: -(len(zpid) + 1)]
+            listing_url = f"https://www.zillow.com/homedetails/{slug}/{zpid}_zpid/"
+        elif raw_url.startswith("/"):
+            listing_url = f"https://www.zillow.com{raw_url}"
+        else:
+            listing_url = raw_url
+
+        loc = home.get("location") or {}
+        coords = loc.get("coordinates") or {}
+        street = str(loc.get("streetAddress") or "")
+        city = str(loc.get("city") or t_map.get("listingCity") or "")
+        state = str(loc.get("stateCode") or t_map.get("listingState") or default_state).upper()
+        zipcode = str(loc.get("zipCode") or t_map.get("listingZip") or "")
+        full_address = str(
+            loc.get("fullLocation")
+            or ", ".join(p for p in [street, city, f"{state} {zipcode}".strip()] if p)
+        )
+
+        cur_status = home.get("currentStatus") or {}
+        is_sold = bool(cur_status.get("isRecentlySold")) or category == "SOLD"
+        listing_category = "SOLD" if is_sold else "FOR_SALE"
+        home_status = "RECENTLY_SOLD" if is_sold else "FOR_SALE"
+
+        price_obj = home.get("price") or {}
+        price_val = parse_int(price_obj.get("price")) or parse_int(t_map.get("listingPrice"))
+        price_display = str(price_obj.get("formattedPrice") or (f"${price_val:,}" if price_val else ""))
+        last_sold_price = price_val if is_sold else None
+
+        beds_obj = home.get("bedrooms") or {}
+        baths_obj = home.get("bathrooms") or {}
+        beds = parse_int(beds_obj.get("value") if beds_obj.get("value") is not None else beds_obj.get("formattedValue"))
+        baths = parse_float(
+            baths_obj.get("value") if baths_obj.get("value") is not None else baths_obj.get("formattedValue")
+        )
+
+        floor_obj = home.get("floorSpace") or {}
+        sqft_int = parse_int(floor_obj.get("formattedDimension"))
+        total_area_str = str(floor_obj.get("formattedDimension") or (f"{sqft_int:,} sqft" if sqft_int else ""))
+
+        pps_raw = eight_bit.get("Price/Sqft", "")
+        price_per_sqft = parse_float(pps_raw) or (
+            round(price_val / sqft_int, 2) if (price_val and sqft_int and sqft_int > 0) else None
+        )
+
+        desc_text = str((home.get("description") or {}).get("value") or "")
+        year_built = parse_int(eight_bit.get("Year Built"))
+        if not year_built and desc_text:
+            ym = re.search(r"built in (\d{4})", desc_text, re.IGNORECASE)
+            if ym:
+                year_built = int(ym.group(1))
+
+        lot_obj = home.get("lotSize") or {}
+        lot_size_str = str(lot_obj.get("formattedDimension") or "")
+        if not lot_size_str and desc_text:
+            lm = re.search(r"lot size of ([\d,.]+ (?:sqft|acres?))", desc_text, re.IGNORECASE)
+            if lm:
+                lot_size_str = lm.group(1)
+
+        parking_str = eight_bit.get("Parking", "")
+        prop_type = str(
+            (home.get("propertyType") or {}).get("value")
+            or eight_bit.get("Property Type")
+            or t_map.get("propertyType")
+            or "SINGLE_FAMILY"
+        ).upper()
+
+        media = home.get("media") or {}
+        photos: List[str] = []
+        for p in media.get("photos") or []:
+            if isinstance(p, dict):
+                u = (p.get("url") or {}).get("large") or (p.get("url") or {}).get("medium") or ""
+                if u:
+                    m_fp = re.search(r"zillowstatic/fp/([a-f0-9]+)-full\.jpg", u)
+                    if m_fp:
+                        u = f"https://photos.zillowstatic.com/fp/{m_fp.group(1)}-p_e.jpg"
+                    photos.append(u)
+        if not photos:
+            hero_u = ((media.get("heroImage") or {}).get("url") or {}).get("medium") or ""
+            if hero_u:
+                m_fp = re.search(r"zillowstatic/fp/([a-f0-9]+)-full\.jpg", hero_u)
+                if m_fp:
+                    hero_u = f"https://photos.zillowstatic.com/fp/{m_fp.group(1)}-p_e.jpg"
+                photos.append(hero_u)
+
+        image_url = photos[0] if photos else ""
+        photo_count = len(photos)
+
+        active_listing = home.get("activeListing") or {}
+        provider = active_listing.get("provider") or {}
+        agent_name = str((provider.get("listingAgent") or {}).get("name") or "")
+        broker_name = str((provider.get("broker") or {}).get("name") or "")
+        if not broker_name:
+            summary_list = provider.get("summary") or []
+            if summary_list and isinstance(summary_list, list):
+                broker_name = str(summary_list[0] or "")
+        date_listed = str(active_listing.get("dateListed") or "")[:10]
+
+        has_3d = 1 if (media.get("hasThreeDHome") or t_map.get("isthreeDTourAvaliable") == "1") else 0
+        now_str = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+
+        return {
+            "zpid": str(zpid)[:50],
+            "listing_url": listing_url[:500],
+            "listing_category": listing_category,
+            "home_status": home_status,
+            "property_type": prop_type[:100],
+            "title": full_address[:255],
+            "address": full_address[:255],
+            "street_address": street[:255],
+            "city": city[:100],
+            "state": state[:50],
+            "zipcode": zipcode[:20],
+            "county": "",
+            "county_fips": "",
+            "neighborhood": "",
+            "timezone": "",
+            "price_display": price_display[:100],
+            "price": price_val,
+            "last_sold_price": last_sold_price,
+            "date_sold": "",
+            "price_per_sqft": price_per_sqft,
+            "zestimate": None,
+            "rent_zestimate": None,
+            "hoa_fee": None,
+            "property_tax_rate": None,
+            "tax_annual_amount": None,
+            "tax_assessed_value": None,
+            "price_note": listing_category,
+            "price_history_json": "[]",
+            "bedrooms": beds,
+            "bathrooms": baths,
+            "full_bathrooms": int(baths) if baths else None,
+            "half_bathrooms": None,
+            "sqft": sqft_int,
+            "total_interior_livable_area": total_area_str[:100],
+            "year_built": year_built,
+            "lot_size": lot_size_str[:100],
+            "parcel_number": "",
+            "room_types": "",
+            "flooring": "",
+            "appliances": "",
+            "heating": "",
+            "cooling": "",
+            "laundry": "",
+            "parking": parking_str[:255],
+            "exterior_features": "",
+            "interior_features": format_interior_summary(
+                bedrooms=beds,
+                bathrooms=baths,
+                full_bathrooms=int(baths) if baths else None,
+                room_types="",
+                flooring="",
+                total_livable_area=total_area_str,
+                virtual_tour_url="",
+                extra_features={"Parking": parking_str} if parking_str else None,
+            ),
+            "amenities_json": json.dumps(eight_bit),
+            "home_insights": "",
+            "facts_and_features": json.dumps(
+                {
+                    "propertyType": prop_type,
+                    "yearBuilt": year_built,
+                    "lotSize": lot_size_str,
+                    "parking": parking_str,
+                    "pricePerSqft": price_per_sqft,
+                }
+            ),
+            "walk_score": None,
+            "transit_score": None,
+            "bike_score": None,
+            "neighborhood_details_json": "{}",
+            "virtual_tour_url": "",
+            "floor_plan_url": "",
+            "has_3d_model": has_3d,
+            "image_url": image_url[:500],
+            "photo_count": photo_count,
+            "photos_json": json.dumps(photos[:12]),
+            "videos_and_media_json": json.dumps(
+                {"has3DModel": bool(has_3d), "hasVideo": bool(media.get("hasVideo"))}
+            ),
+            "latitude": str(coords.get("latitude") or t_map.get("locationLat") or "")[:50],
+            "longitude": str(coords.get("longitude") or t_map.get("locationLon") or "")[:50],
+            "days_on_zillow": None,
+            "time_on_zillow": "",
+            "on_market_date": date_listed,
+            "agent_name": agent_name[:255],
+            "brokerage_name": broker_name[:255],
+            "contact_phone": "",
+            "mls_id": str(t_map.get("maloneID") or "")[:100],
+            "mls_name": "",
+            "provider_listing_id": str(t_map.get("listingID") or "")[:100],
+            "schools_json": "[]",
+            "description": desc_text,
+            "scraped_at": now_str,
+        }
+
+    def fetch_graphql_homes_batch(
+        self,
+        state_upper: str,
+        search_type: str,
+        min_price: int = 0,
+        max_price: str = "*",
+        sort_type: str = "PRICE",
+        ascending: bool = True,
+        limit: int = 1000,
+        extra_filters: Optional[Dict[str, Any]] = None,
+    ) -> Tuple[int, List[Dict[str, Any]]]:
+        """Queries Zillow Group's GraphQL searchHomesByDetails endpoint for up to 1,000 homes per call."""
+        csrf = self.get_graphql_csrf()
+        query = """
+        query SearchStateHomes($searchDetails: SEARCHDETAILS_Input!) {
+          searchHomesByDetails(searchDetails: $searchDetails) {
+            totalHomes
+            homes {
+              __typename
+              typedHomeId
+              url
+              description { value }
+              location {
+                city stateCode zipCode streetAddress
+                fullLocation: formattedLocation(formatType: STREET_CITY_STATE_ZIP)
+                coordinates { latitude longitude }
+              }
+              price {
+                formattedPrice
+                ... on HOME_SinglePrice { price currencyCode }
+              }
+              floorSpace { formattedDimension }
+              lotSize {
+                ... on HOME_SingleDimension { formattedDimension(minDecimalDigits: 2, maxDecimalDigits: 2) }
+              }
+              bedrooms {
+                formattedValue(formatType: COMMON_ABBREVIATION)
+                ... on HOME_FixedBedrooms { value }
+              }
+              bathrooms {
+                formattedValue(formatType: COMMON_ABBREVIATION)
+                ... on HOME_FixedBathrooms { value }
+              }
+              tracking { key value }
+              media {
+                hasThreeDHome
+                hasVideo
+                heroImage { url { medium } }
+                photos { url { large } }
+              }
+              ... on HOME_Property {
+                propertyType { value }
+                currentStatus { isRecentlySold isActiveForSale }
+                activeListing {
+                  dateListed
+                  provider {
+                    summary(formatType: SHORT)
+                    listingAgent { name }
+                    broker { name }
+                  }
+                }
+              }
+            }
+          }
+        }
+        """
+        filters: Dict[str, Any] = {
+            "sort": {"type": sort_type, "ascending": ascending},
+            "limit": limit,
+        }
+        if min_price > 0 or max_price != "*":
+            filters["price"] = {"min": str(min_price), "max": str(max_price)}
+        if extra_filters:
+            filters.update(extra_filters)
+
+        variables = {
+            "searchDetails": {
+                "searchType": search_type,
+                "location": {"states": [{"state": state_upper}]},
+                "filters": filters,
+            }
+        }
+        headers = {
+            "Content-Type": "application/json",
+            "x-csrf-token": csrf,
+            "Origin": "https://www.trulia.com",
+            "Referer": f"https://www.trulia.com/{state_upper}/",
+        }
+        for attempt in range(3):
+            try:
+                resp = self.session.post(
+                    "https://www.trulia.com/graphql?operation_name=SearchStateHomes",
+                    json={"operationName": "SearchStateHomes", "query": query, "variables": variables},
+                    headers=headers,
+                    timeout=30,
+                )
+                if resp.status_code == 200:
+                    rj = resp.json()
+                    res = (rj.get("data") or {}).get("searchHomesByDetails") or {}
+                    return int(res.get("totalHomes") or 0), (res.get("homes") or [])
+                if resp.status_code == 403:
+                    ZillowSalesScraper._shared_csrf_token = None
+                    csrf = self.get_graphql_csrf()
+                    headers["x-csrf-token"] = csrf
+            except Exception as exc:
+                if attempt == 2:
+                    print(f"  [!] GraphQL error for {state_upper} ({search_type}, min={min_price}): {exc}")
+                time.sleep(1.0)
+        return 0, []
 
     def gather_high_volume_state(
         self,
@@ -305,97 +636,149 @@ class ZillowSalesScraper(ZillowColoradoScraper):
         seen_urls: Set[str],
         categories: List[str],
         delay: float = 0.05,
+        seen_zpids: Optional[Set[str]] = None,
     ) -> List[Dict[str, Any]]:
         """
-        Gathers up to `target_count` (e.g. 10,000) unique listings for a state using
-        price-band slicing + 2x2 geographic quadrant subdivision on mapResults.
+        Gathers up to `target_count` (e.g. 10,000+) unique listings for a state using
+        Zillow Group's 1,000-listing/request GraphQL price-cursor + sqft-band engine (`FOR_SALE` + `SOLD`).
         """
         state_clean = state_code.lower().strip()
         state_upper = state_clean.upper()
         collected: List[Dict[str, Any]] = []
+        if seen_zpids is None:
+            seen_zpids = set()
 
-        def add_items(items: List[Dict[str, Any]], cat_label: str) -> int:
-            added = 0
-            for item in items:
-                if len(collected) >= target_count:
-                    break
-                rec = self.parse_sale_search_card(item, category=cat_label, default_state=state_upper)
-                u = rec.get("listing_url", "")
-                if not u or u in seen_urls:
-                    continue
-                seen_urls.add(u)
-                collected.append(rec)
-                added += 1
-            return added
+        sqft_bands = [
+            ("1", "950"),
+            ("951", "1200"),
+            ("1201", "1400"),
+            ("1401", "1600"),
+            ("1601", "1800"),
+            ("1801", "2050"),
+            ("2051", "2350"),
+            ("2351", "2750"),
+            ("2751", "3300"),
+            ("3301", "4200"),
+            ("4201", "100000"),
+        ]
 
         for cat in categories:
             if len(collected) >= target_count:
                 break
-            cat_label = "SOLD" if cat == "sold" else "FOR_SALE"
-            base_url = (
-                f"https://www.zillow.com/{state_clean}/sold/"
-                if cat == "sold"
-                else f"https://www.zillow.com/{state_clean}/"
-            )
-            next_data = self.fetch_next_data(base_url)
-            if not next_data:
-                continue
+            search_type = "SOLD" if cat == "sold" else "FOR_SALE"
+            cat_label = search_type
+            base_extra = {"soldWithin": 36} if search_type == "SOLD" else {}
 
-            sps = next_data.get("props", {}).get("pageProps", {}).get("searchPageState", {})
-            base_qs = sps.get("queryState") or {}
-            sr = sps.get("cat1", {}).get("searchResults", {})
-            add_items((sr.get("listResults") or []) + (sr.get("mapResults") or []), cat_label)
-
-            if not base_qs.get("mapBounds"):
-                continue
-
-            state_bounds = base_qs["mapBounds"]
-            quadrants = subdivide_bounds(state_bounds)
-            req_id = 2
-
-            # Pass 1: Sweep 22 disjoint price bands across the whole state
-            dense_bands: List[Tuple[int, int]] = []
-            for pmin, pmax in PRICE_BANDS:
+            # Pass 1: Ascending price cursor from $1 upward (1,000 homes per call)
+            min_price = 1
+            for _ in range(45):
                 if len(collected) >= target_count:
                     break
-                qs = copy.deepcopy(base_qs)
-                qs.setdefault("filterState", {})["price"] = {"min": pmin, "max": pmax}
-                items = self.fetch_map_results_put(qs, referer=base_url, request_id=req_id)
-                req_id += 1
-                added = add_items(items, cat_label)
-                if len(items) >= 450:
-                    dense_bands.append((pmin, pmax))
+                _, homes = self.fetch_graphql_homes_batch(
+                    state_upper=state_upper,
+                    search_type=search_type,
+                    min_price=min_price,
+                    max_price="*",
+                    sort_type="PRICE",
+                    ascending=True,
+                    limit=1000,
+                    extra_filters=base_extra,
+                )
+                if not homes:
+                    break
+
+                batch_prices: List[int] = []
+                added_in_step = 0
+                for h in homes:
+                    if len(collected) >= target_count:
+                        break
+                    rec = self.parse_graphql_home(h, category=cat_label, default_state=state_upper)
+                    u = rec.get("listing_url", "")
+                    z = rec.get("zpid", "")
+                    p = rec.get("price")
+                    if isinstance(p, int) and p >= min_price:
+                        batch_prices.append(p)
+                    if not u or u in seen_urls or (z and z in seen_zpids):
+                        continue
+                    seen_urls.add(u)
+                    if z:
+                        seen_zpids.add(z)
+                    collected.append(rec)
+                    added_in_step += 1
+
+                if len(homes) < 100 or not batch_prices:
+                    break
+
+                max_p = max(batch_prices)
+                if max_p > min_price and added_in_step > 0:
+                    min_price = max_p
+                else:
+                    min_price = max_p + 1
+
                 if delay > 0:
                     time.sleep(delay)
 
-            # Pass 2: If we still need more to reach target_count, subdivide dense price bands into 4 quadrants
-            for pmin, pmax in dense_bands:
-                if len(collected) >= target_count:
-                    break
-                for quad in quadrants:
+            # Pass 2: If still below target_count (e.g. SOLD in non-disclosure states or small states), sweep squareFeet bands
+            if len(collected) < target_count:
+                for sf_min, sf_max in sqft_bands:
                     if len(collected) >= target_count:
                         break
-                    qs = copy.deepcopy(base_qs)
-                    qs["mapBounds"] = quad
-                    qs.setdefault("filterState", {})["price"] = {"min": pmin, "max": pmax}
-                    items = self.fetch_map_results_put(qs, referer=base_url, request_id=req_id)
-                    req_id += 1
-                    add_items(items, cat_label)
-                    if len(items) >= 450 and len(collected) < target_count:
-                        # Level-2 quadtree subdivision (16 sub-tiles) for ultra-dense metro areas
-                        for sub_quad in subdivide_bounds(quad):
+                    for asc in (False, True):
+                        if len(collected) >= target_count:
+                            break
+                        tot_sf, sf_homes = self.fetch_graphql_homes_batch(
+                            state_upper=state_upper,
+                            search_type=search_type,
+                            min_price=0,
+                            max_price="*",
+                            sort_type="DATE",
+                            ascending=asc,
+                            limit=1000,
+                            extra_filters={**base_extra, "squareFeet": {"min": sf_min, "max": sf_max}},
+                        )
+                        for h in sf_homes:
                             if len(collected) >= target_count:
                                 break
-                            qs2 = copy.deepcopy(base_qs)
-                            qs2["mapBounds"] = sub_quad
-                            qs2.setdefault("filterState", {})["price"] = {"min": pmin, "max": pmax}
-                            sub_items = self.fetch_map_results_put(qs2, referer=base_url, request_id=req_id)
-                            req_id += 1
-                            add_items(sub_items, cat_label)
-                            if delay > 0:
-                                time.sleep(delay)
-                    if delay > 0:
-                        time.sleep(delay)
+                            rec = self.parse_graphql_home(h, category=cat_label, default_state=state_upper)
+                            u = rec.get("listing_url", "")
+                            z = rec.get("zpid", "")
+                            if not u or u in seen_urls or (z and z in seen_zpids):
+                                continue
+                            seen_urls.add(u)
+                            if z:
+                                seen_zpids.add(z)
+                            collected.append(rec)
+                        if delay > 0:
+                            time.sleep(delay)
+                        if tot_sf <= 1000:
+                            break
+
+            # Pass 3: Unfiltered newest/oldest sweep (catches lots/land with null sqft and null price)
+            if len(collected) < target_count:
+                for asc in (False, True):
+                    if len(collected) >= target_count:
+                        break
+                    _, newest_homes = self.fetch_graphql_homes_batch(
+                        state_upper=state_upper,
+                        search_type=search_type,
+                        min_price=0,
+                        max_price="*",
+                        sort_type="DATE",
+                        ascending=asc,
+                        limit=1000,
+                    )
+                    for h in newest_homes:
+                        if len(collected) >= target_count:
+                            break
+                        rec = self.parse_graphql_home(h, category=cat_label, default_state=state_upper)
+                        u = rec.get("listing_url", "")
+                        z = rec.get("zpid", "")
+                        if not u or u in seen_urls or (z and z in seen_zpids):
+                            continue
+                        seen_urls.add(u)
+                        if z:
+                            seen_zpids.add(z)
+                        collected.append(rec)
 
         return collected
 
@@ -664,15 +1047,35 @@ class ZillowSalesScraper(ZillowColoradoScraper):
         }
 
 
-def get_existing_urls_for_state(ncb_client: NoCodeBackendClient, table: str, state_upper: str) -> Dict[str, Any]:
-    """Fetches existing listing URLs for a single state so per-state deduplication scales to 500k+ rows."""
+def get_existing_urls_for_state(
+    ncb_client: NoCodeBackendClient, table: str, state_upper: str
+) -> Tuple[Dict[str, Any], Set[str], int]:
+    """Fetches existing listing URLs, ZPIDs, and exact SQL row count for a single state."""
     existing: Dict[str, Any] = {}
+    zpids: Set[str] = set()
+    exact_count = 0
     try:
+        cnt_res = ncb_client.call_mcp_tool(
+            "execute_sql",
+            {
+                "database": ncb_client.instance,
+                "sql": f"SELECT COUNT(*) as cnt FROM {table} WHERE state = '{state_upper}';",
+            },
+        )
+        for item in cnt_res.get("result", {}).get("content", []):
+            txt = item.get("text", "")
+            if "cnt" in txt:
+                parsed = json.loads(txt)
+                for res_block in parsed.get("results") or []:
+                    for r in res_block.get("rows") or []:
+                        if isinstance(r, dict) and r.get("cnt") is not None:
+                            exact_count = int(r["cnt"])
+
         res = ncb_client.call_mcp_tool(
             "execute_sql",
             {
                 "database": ncb_client.instance,
-                "sql": f"SELECT id, listing_url FROM {table} WHERE state = '{state_upper}' LIMIT 20000;",
+                "sql": f"SELECT id, zpid, listing_url FROM {table} WHERE state = '{state_upper}' LIMIT 25000;",
             },
         )
         for item in res.get("result", {}).get("content", []):
@@ -681,11 +1084,14 @@ def get_existing_urls_for_state(ncb_client: NoCodeBackendClient, table: str, sta
                 parsed = json.loads(txt)
                 for res_block in parsed.get("results") or []:
                     for r in res_block.get("rows") or []:
-                        if isinstance(r, dict) and r.get("listing_url"):
-                            existing[r["listing_url"]] = r.get("id")
+                        if isinstance(r, dict):
+                            if r.get("listing_url"):
+                                existing[r["listing_url"]] = r.get("id")
+                            if r.get("zpid"):
+                                zpids.add(str(r["zpid"]))
     except Exception as exc:
         print(f"  [!] Warning checking state {state_upper} existing URLs: {exc}")
-    return existing
+    return existing, zpids, max(exact_count, len(existing), len(zpids))
 
 
 def insert_state_records_fast(
@@ -819,7 +1225,7 @@ def main() -> None:
     print(f"🏷️  Categories: {', '.join(c.upper() for c in args.categories)}")
     print(f"🌎 Target States ({len(target_states)}): {', '.join(s.upper() for s in target_states)}")
     print(
-        f"⚡ Mode: {'HIGH-VOLUME MAP+PRICE SLICER (' + str(args.per_state) + '/state, workers=' + str(args.workers) + ')' if use_high_volume else ('FAST (Search Cards)' if args.fast else 'FULL DETAIL')}"
+        f"⚡ Mode: {'HIGH-VOLUME GRAPHQL 1000/CALL ENGINE (' + str(args.per_state) + '/state, workers=' + str(args.workers) + ')' if use_high_volume else ('FAST (Search Cards)' if args.fast else 'FULL DETAIL')}"
     )
     print("============================================================\n")
 
@@ -831,6 +1237,9 @@ def main() -> None:
         data_api_url=NCB_DATA_API_URL,
         table=args.table,
     )
+    scraper = ZillowSalesScraper(delay_seconds=args.delay)
+    if use_high_volume:
+        scraper.get_graphql_csrf()
 
     total_scraped = 0
     total_inserted = 0
@@ -840,13 +1249,14 @@ def main() -> None:
         def process_one_state(st_code: str) -> Tuple[str, int, int, int]:
             st_upper = st_code.upper()
             st_scraper = ZillowSalesScraper(delay_seconds=args.delay)
-            st_existing = (
-                {}
-                if args.dry_run
-                else get_existing_urls_for_state(ncb_client, args.table, st_upper)
-            )
+            if args.dry_run:
+                st_existing, st_zpids, already_cnt = {}, set(), 0
+            else:
+                st_existing, st_zpids, already_cnt = get_existing_urls_for_state(ncb_client, args.table, st_upper)
             st_seen: Set[str] = set() if args.update_existing else set(st_existing.keys())
-            already_cnt = len(st_seen)
+            if args.update_existing:
+                st_zpids = set()
+                already_cnt = 0
             needed_cnt = max(0, args.per_state - already_cnt)
             if needed_cnt == 0:
                 print(f"✅ [{st_upper}] Already has {already_cnt} listings in {args.table}", flush=True)
@@ -861,6 +1271,7 @@ def main() -> None:
                 seen_urls=st_seen,
                 categories=args.categories,
                 delay=args.delay,
+                seen_zpids=st_zpids,
             )
             ins_cnt = 0
             if recs and not args.dry_run:
@@ -893,13 +1304,14 @@ def main() -> None:
             break
 
         state_upper = state_code.upper()
-        state_existing = (
-            {}
-            if args.dry_run
-            else get_existing_urls_for_state(ncb_client, args.table, state_upper)
-        )
+        if args.dry_run:
+            state_existing, state_zpids, already_count = {}, set(), 0
+        else:
+            state_existing, state_zpids, already_count = get_existing_urls_for_state(ncb_client, args.table, state_upper)
         seen_urls: Set[str] = set() if args.update_existing else set(state_existing.keys())
-        already_count = len(seen_urls)
+        if args.update_existing:
+            state_zpids = set()
+            already_count = 0
 
         if use_high_volume:
             needed = max(0, args.per_state - already_count)
@@ -913,10 +1325,11 @@ def main() -> None:
                 seen_urls=seen_urls,
                 categories=args.categories,
                 delay=args.delay,
+                seen_zpids=state_zpids,
             )
             total_scraped += len(state_records)
             if state_records and not args.dry_run:
-                ins = insert_state_records_fast(ncb_client, args.table, state_records, batch_size=400)
+                ins = insert_state_records_fast(ncb_client, args.table, state_records, batch_size=500)
                 total_inserted += ins
                 print(
                     f"   ✅ {state_upper} Synced ({args.table}) -> Inserted: {ins} "
