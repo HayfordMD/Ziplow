@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-Zillow Colorado Rentals Scraper -> NoCodeBackend (NCB) Database (`43023_ziplow_db`)
+Zillow Nationwide & State Rentals Scraper -> NoCodeBackend (NCB) Database (`43023_ziplow_db`)
 
-Scrapes Colorado rental listings from:
-  - https://www.zillow.com/co/rentals/
-  - https://www.zillow.com/co/rent-houses/
+Scrapes rental listings across Colorado or all 50 US states + DC from:
+  - https://www.zillow.com/<state>/rentals/ (and paginated /2_p/, /3_p/, ...)
+  - https://www.zillow.com/<state>/rent-houses/
   - Individual Zillow `/homedetails/...` and `/apartments/...` pages
 
 Extracts price, address, beds, baths, full bathrooms, sqft, total interior livable area,
@@ -17,9 +17,8 @@ import datetime
 import json
 import os
 import re
-import sys
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set
 from urllib.parse import urljoin
 
 from bs4 import BeautifulSoup
@@ -30,9 +29,12 @@ import requests as std_requests
 # Load environment variables from .env
 load_dotenv()
 
-DEFAULT_SEARCH_URLS = [
-    "https://www.zillow.com/co/rentals/",
-    "https://www.zillow.com/co/rent-houses/",
+US_STATES = [
+    "al", "ak", "az", "ar", "ca", "co", "ct", "de", "dc", "fl",
+    "ga", "hi", "id", "il", "in", "ia", "ks", "ky", "la", "me",
+    "md", "ma", "mi", "mn", "ms", "mo", "mt", "ne", "nv", "nh",
+    "nj", "nm", "ny", "nc", "nd", "oh", "ok", "or", "pa", "ri",
+    "sc", "sd", "tn", "tx", "ut", "vt", "va", "wa", "wv", "wi", "wy",
 ]
 
 DEFAULT_EXAMPLE_URLS = [
@@ -119,7 +121,7 @@ def format_interior_summary(
 
 
 class ZillowColoradoScraper:
-    """Scrapes Zillow Colorado rental search pages and property/building detail pages."""
+    """Scrapes Zillow state/nationwide rental search pages and property/building detail pages."""
 
     def __init__(self, delay_seconds: float = 1.0):
         self.session = cffi_requests.Session(impersonate="chrome")
@@ -170,7 +172,7 @@ class ZillowColoradoScraper:
         print(f"   Found {len(combined)} rental listings on {search_url}")
         return combined
 
-    def parse_search_card_fallback(self, card: Dict[str, Any]) -> Dict[str, Any]:
+    def parse_search_card_fallback(self, card: Dict[str, Any], default_state: str = "CO") -> Dict[str, Any]:
         """Builds a baseline record from a search result card prior to detail enrichment."""
         detail_url = card.get("detailUrl", "")
         if detail_url and detail_url.startswith("/"):
@@ -209,7 +211,7 @@ class ZillowColoradoScraper:
         total_area_str = f"{sqft_int:,} sqft" if sqft_int else ""
 
         photos = []
-        for p in card.get("carouselPhotosComposable", {}).get("photoData", []) or []:
+        for p in (card.get("carouselPhotosComposable") or {}).get("photoData") or []:
             if isinstance(p, dict) and p.get("photoKey"):
                 photos.append(
                     f"https://photos.zillowstatic.com/fp/{p['photoKey']}-p_e.jpg"
@@ -226,7 +228,7 @@ class ZillowColoradoScraper:
             "address": str(card.get("address") or "")[:255],
             "street_address": str(card.get("addressStreet") or "")[:255],
             "city": str(card.get("addressCity") or "")[:100],
-            "state": str(card.get("addressState") or "CO")[:50],
+            "state": str(card.get("addressState") or default_state.upper())[:50],
             "zipcode": str(card.get("addressZipcode") or "")[:20],
             "price_display": str(price_str)[:100],
             "price_monthly": price_monthly,
@@ -283,7 +285,7 @@ class ZillowColoradoScraper:
 
         street = addr_obj.get("streetAddress") or prop.get("streetAddress") or ""
         city = addr_obj.get("city") or prop.get("city") or ""
-        state = addr_obj.get("state") or prop.get("state") or "CO"
+        state = addr_obj.get("state") or prop.get("state") or (base_record or {}).get("state") or "CO"
         zipcode = addr_obj.get("zipcode") or prop.get("zipcode") or ""
         full_address = ", ".join(p for p in [street, city, f"{state} {zipcode}".strip()] if p)
 
@@ -440,7 +442,7 @@ class ZillowColoradoScraper:
         building_name = building.get("buildingName") or (base_record or {}).get("title") or ""
         street = building.get("streetAddress") or (building.get("address") or {}).get("streetAddress") or ""
         city = building.get("city") or (building.get("address") or {}).get("city") or ""
-        state = building.get("state") or (building.get("address") or {}).get("state") or "CO"
+        state = building.get("state") or (building.get("address") or {}).get("state") or (base_record or {}).get("state") or "CO"
         zipcode = building.get("zipcode") or (building.get("address") or {}).get("zipcode") or ""
         full_address = building.get("fullAddress") or ", ".join(
             p for p in [street, city, f"{state} {zipcode}".strip()] if p
@@ -616,7 +618,7 @@ class ZillowColoradoScraper:
                     "buildingAmenities": building_amenity_groups,
                     "commonUnitAmenities": building.get("commonUnitAmenities"),
                     "customAmenities": custom_raw,
-                    "pets": (building.get("amenityDetails") or {}).get("pets"),
+                    "pets": amenity_details.get("pets"),
                     "virtualTourUrl": virtual_tour_url,
                 }
             ),
@@ -701,13 +703,13 @@ class NoCodeBackendClient:
         existing: Dict[str, Any] = {}
         try:
             if self.secret_key:
-                url = f"{self.data_api_url}/read/{self.table}?instance={self.instance}&limit=500"
+                url = f"{self.data_api_url}/read/{self.table}?instance={self.instance}&limit=5000"
                 headers = {
                     "Content-Type": "application/json",
                     "X-Database-Instance": self.instance,
                     "Authorization": f"Bearer {self.secret_key}",
                 }
-                resp = std_requests.get(url, headers=headers, timeout=20)
+                resp = std_requests.get(url, headers=headers, timeout=25)
                 if resp.ok:
                     body = resp.json()
                     rows = body.get("data", body) if isinstance(body, dict) else body
@@ -725,7 +727,7 @@ class NoCodeBackendClient:
                     "execute_sql",
                     {
                         "database": self.instance,
-                        "sql": f"SELECT id, listing_url FROM {self.table} LIMIT 500;",
+                        "sql": f"SELECT id, listing_url FROM {self.table} LIMIT 5000;",
                     },
                 )
                 text_items = res.get("result", {}).get("content", [])
@@ -745,9 +747,11 @@ class NoCodeBackendClient:
 
         return existing
 
-    def upsert_records(self, records: List[Dict[str, Any]]) -> Dict[str, int]:
+    def upsert_records(
+        self, records: List[Dict[str, Any]], existing_cache: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, int]:
         """Inserts new records or updates existing ones in NoCodeBackend."""
-        existing = self.get_existing_urls()
+        existing = existing_cache if existing_cache is not None else self.get_existing_urls()
         to_insert: List[Dict[str, Any]] = []
         updated_count = 0
 
@@ -770,12 +774,14 @@ class NoCodeBackendClient:
                     print(f"  [!] Update failed for id={rec_id}: {exc}")
             if not rec_id:
                 to_insert.append(rec)
+                if l_url:
+                    existing[l_url] = True
 
         inserted_count = 0
         if to_insert:
             # Prefer MCP `insert_mock_data` when NCB_MCP_KEY is configured
             if self.mcp_key:
-                batch_size = 10
+                batch_size = 20
                 for idx in range(0, len(to_insert), batch_size):
                     batch = to_insert[idx : idx + batch_size]
                     res = self.call_mcp_tool(
@@ -806,33 +812,70 @@ class NoCodeBackendClient:
         return {"inserted": inserted_count, "updated": updated_count}
 
 
+def build_state_search_urls(
+    states: List[str], pages_per_state: int = 1, include_houses: bool = True
+) -> List[tuple[str, str]]:
+    """Returns a list of (state_code, search_url) tuples across the requested states and pages."""
+    urls: List[tuple[str, str]] = []
+    for st in states:
+        st_clean = st.lower().strip()
+        for page in range(1, pages_per_state + 1):
+            suffix = f"{page}_p/" if page > 1 else ""
+            urls.append((st_clean.upper(), f"https://www.zillow.com/{st_clean}/rentals/{suffix}"))
+            if include_houses:
+                urls.append((st_clean.upper(), f"https://www.zillow.com/{st_clean}/rent-houses/{suffix}"))
+    return urls
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Scrape Colorado rentals from Zillow into NoCodeBackend (NCB)."
+        description="Scrape Colorado or Nationwide US rentals from Zillow into NoCodeBackend (NCB)."
     )
     parser.add_argument(
-        "--search-urls",
-        nargs="*",
-        default=DEFAULT_SEARCH_URLS,
-        help="Zillow Colorado rental search URLs to scrape.",
+        "--nationwide",
+        action="store_true",
+        help="Scrape rentals across all 50 US states + DC.",
     )
     parser.add_argument(
-        "--detail-urls",
+        "--states",
         nargs="*",
-        default=DEFAULT_EXAMPLE_URLS,
-        help="Specific Zillow property/apartment URLs to always scrape in full detail.",
+        default=["co"],
+        help="State codes to scrape (e.g. `--states co tx ca ny` or `--states all`). Default: co.",
+    )
+    parser.add_argument(
+        "--pages-per-state",
+        type=int,
+        default=1,
+        help="Number of search pages to fetch per state category (default: 1).",
+    )
+    parser.add_argument(
+        "--per-state",
+        type=int,
+        default=25,
+        help="Maximum listings to collect per state (default: 25).",
     )
     parser.add_argument(
         "--max-listings",
         type=int,
-        default=20,
-        help="Maximum number of listings to scrape and enrich (default: 20).",
+        default=2500,
+        help="Maximum total listings to scrape across the run (default: 2500).",
+    )
+    parser.add_argument(
+        "--fast",
+        action="store_true",
+        help="Fast mode: extract directly from search result JSON without fetching each detail page.",
+    )
+    parser.add_argument(
+        "--detail-urls",
+        nargs="*",
+        default=[],
+        help="Specific Zillow property/apartment URLs to scrape in full detail.",
     )
     parser.add_argument(
         "--delay",
         type=float,
-        default=0.75,
-        help="Delay in seconds between detail page requests (default: 0.75).",
+        default=0.35,
+        help="Delay in seconds between HTTP requests (default: 0.35).",
     )
     parser.add_argument(
         "--dry-run",
@@ -841,78 +884,118 @@ def main() -> None:
     )
     args = parser.parse_args()
 
+    if args.nationwide or (len(args.states) == 1 and args.states[0].lower() == "all"):
+        target_states = US_STATES
+    else:
+        target_states = [s.lower() for s in args.states]
+
     print("============================================================")
-    print("🏔️  Zillow Colorado Rentals Scraper -> NoCodeBackend (NCB)")
+    print("🇺🇸  Zillow Rentals Scraper -> NoCodeBackend (NCB)")
     print(f"📌 Database Instance: {NCB_INSTANCE} (Table: {NCB_TABLE})")
+    print(f"🌎 Target States ({len(target_states)}): {', '.join(s.upper() for s in target_states)}")
+    print(f"⚡ Mode: {'FAST (Search Cards)' if args.fast else 'FULL DETAIL (Search + Detail Pages)'}")
     print("============================================================\n")
 
     scraper = ZillowColoradoScraper(delay_seconds=args.delay)
-    collected_records: Dict[str, Dict[str, Any]] = {}
-
-    # 1. Always scrape the explicit detail URLs first (e.g., Highlands Ranch ZPID & Brighton Crossing)
-    for detail_url in args.detail_urls:
-        print(f"🏠 Scraping featured detail page: {detail_url}")
-        rec = scraper.scrape_detail_url(detail_url)
-        if rec:
-            collected_records[detail_url] = rec
-            print(
-                f"   ✓ {rec['title']} | {rec['price_display']} | "
-                f"{rec['bedrooms']} bd / {rec['bathrooms']} ba / {rec['sqft']} sqft"
-            )
-            if rec.get("virtual_tour_url"):
-                print(f"     🎥 Virtual Tour: {rec['virtual_tour_url']}")
-        time.sleep(args.delay)
-
-    # 2. Scrape Zillow Colorado rental search pages and interleave results
-    card_lists: List[List[Dict[str, Any]]] = []
-    for s_url in args.search_urls:
-        cards = scraper.extract_search_results(s_url)
-        if cards:
-            card_lists.append(cards)
-        time.sleep(args.delay)
-
-    search_cards: List[Dict[str, Any]] = []
-    max_len = max((len(c) for c in card_lists), default=0)
-    for idx in range(max_len):
-        for clist in card_lists:
-            if idx < len(clist):
-                search_cards.append(clist[idx])
-
-    # 3. Enrich listings up to max_listings
-    for card in search_cards:
-        if len(collected_records) >= args.max_listings:
-            break
-        base_rec = scraper.parse_search_card_fallback(card)
-        detail_url = base_rec.get("listing_url", "")
-        if not detail_url or detail_url in collected_records:
-            continue
-
-        print(f"🔎 [{len(collected_records) + 1}/{args.max_listings}] Enriching detail page: {detail_url}")
-        try:
-            enriched = scraper.scrape_detail_url(detail_url, base_record=base_rec) or base_rec
-        except Exception as exc:
-            print(f"   [!] Detail parse fallback for {detail_url}: {exc}")
-            enriched = base_rec
-        collected_records[detail_url] = enriched
-        print(
-            f"   ✓ {enriched['title']} ({enriched['city']}, {enriched['state']}) | "
-            f"{enriched['price_display']} | {enriched['bedrooms']} bd / {enriched['bathrooms']} ba"
-        )
-        time.sleep(args.delay)
-
-    final_records = list(collected_records.values())
-    print(f"\n📦 Total Colorado rental listings scraped: {len(final_records)}")
-
-    if args.dry_run:
-        print(json.dumps(final_records[:3], indent=2))
-        return
-
-    print(f"\n🚀 Syncing {len(final_records)} listings to NoCodeBackend ({NCB_INSTANCE}.{NCB_TABLE})...")
     ncb_client = NoCodeBackendClient()
-    result = ncb_client.upsert_records(final_records)
-    print(
-        f"✅ Sync Complete! Inserted: {result['inserted']}, Updated: {result['updated']}"
-    )
+    existing_urls = {} if args.dry_run else ncb_client.get_existing_urls()
+    seen_urls: Set[str] = set(existing_urls.keys())
+
+    total_scraped = 0
+    total_inserted = 0
+    total_updated = 0
+
+    # 1. Scrape explicit detail URLs if provided (or default examples when running CO only)
+    detail_urls = args.detail_urls
+    if not detail_urls and target_states == ["co"] and not args.fast:
+        detail_urls = DEFAULT_EXAMPLE_URLS
+
+    if detail_urls:
+        featured_batch: List[Dict[str, Any]] = []
+        for detail_url in detail_urls:
+            print(f"🏠 Scraping featured detail page: {detail_url}")
+            rec = scraper.scrape_detail_url(detail_url)
+            if rec:
+                featured_batch.append(rec)
+                seen_urls.add(detail_url)
+                total_scraped += 1
+                print(
+                    f"   ✓ {rec['title']} | {rec['price_display']} | "
+                    f"{rec['bedrooms']} bd / {rec['bathrooms']} ba / {rec['sqft']} sqft"
+                )
+            time.sleep(args.delay)
+        if featured_batch and not args.dry_run:
+            res = ncb_client.upsert_records(featured_batch, existing_cache=existing_urls)
+            total_inserted += res["inserted"]
+            total_updated += res["updated"]
+
+    # 2. Iterate state-by-state and sync incrementally to NoCodeBackend
+    for state_code in target_states:
+        if total_scraped >= args.max_listings:
+            break
+
+        state_upper = state_code.upper()
+        state_urls = build_state_search_urls(
+            [state_code], pages_per_state=args.pages_per_state, include_houses=not args.fast
+        )
+        card_lists: List[List[Dict[str, Any]]] = []
+        for _, s_url in state_urls:
+            cards = scraper.extract_search_results(s_url)
+            if cards:
+                card_lists.append(cards)
+            time.sleep(args.delay)
+
+        # Interleave cards from rentals and rent-houses
+        interleaved_cards: List[Dict[str, Any]] = []
+        max_len = max((len(c) for c in card_lists), default=0)
+        for idx in range(max_len):
+            for clist in card_lists:
+                if idx < len(clist):
+                    interleaved_cards.append(clist[idx])
+
+        state_records: List[Dict[str, Any]] = []
+        for card in interleaved_cards:
+            if len(state_records) >= args.per_state or total_scraped >= args.max_listings:
+                break
+            base_rec = scraper.parse_search_card_fallback(card, default_state=state_upper)
+            detail_url = base_rec.get("listing_url", "")
+            if not detail_url or detail_url in seen_urls:
+                continue
+
+            seen_urls.add(detail_url)
+            if args.fast:
+                enriched = base_rec
+            else:
+                print(
+                    f"🔎 [{state_upper} {len(state_records) + 1}/{args.per_state}] Enriching: {detail_url}"
+                )
+                try:
+                    enriched = scraper.scrape_detail_url(detail_url, base_record=base_rec) or base_rec
+                except Exception as exc:
+                    print(f"   [!] Detail parse fallback for {detail_url}: {exc}")
+                    enriched = base_rec
+                time.sleep(args.delay)
+
+            state_records.append(enriched)
+            total_scraped += 1
+
+        if state_records:
+            if args.dry_run:
+                print(f"   [Dry Run] Collected {len(state_records)} records for {state_upper}")
+            else:
+                res = ncb_client.upsert_records(state_records, existing_cache=existing_urls)
+                total_inserted += res["inserted"]
+                total_updated += res["updated"]
+                print(
+                    f"   ✅ {state_upper} Synced -> Inserted: {res['inserted']}, "
+                    f"Updated: {res['updated']} (Total DB Synced: {total_inserted + total_updated})"
+                )
+
+    print("\n============================================================")
+    print(f"🎉 Scrape Complete! Total Scraped: {total_scraped}")
+    if not args.dry_run:
+        print(f"🗄️  Database ({NCB_INSTANCE}.{NCB_TABLE}) -> Inserted: {total_inserted}, Updated: {total_updated}")
+    print("============================================================")
 
 
 if __name__ == "__main__":
