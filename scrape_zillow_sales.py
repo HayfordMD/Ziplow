@@ -1,32 +1,26 @@
 #!/usr/bin/env python3
 """
-Zillow For Sale & Recently Sold Scraper -> NoCodeBackend (NCB) Database (`43023_ziplow_db.sales`)
+Zillow High-Volume For Sale & Recently Sold Scraper -> NoCodeBackend (`43023_ziplow_db.sales`)
 
-Scrapes For Sale (`FOR_SALE`) and Recently Sold (`RECENTLY_SOLD` / `SOLD`) listings across
-Colorado or all 50 US states + DC from:
-  - https://www.zillow.com/<state>/          (For Sale)
-  - https://www.zillow.com/<state>/sold/     (Recently Sold)
-  - Individual Zillow `/homedetails/...` pages
-
-Extracts 75+ columns per property including:
-  - All picture links (`image_url`, `photo_count`, and full array of high-res URLs in `photos_json`)
-  - Sale price, last sold price, date sold, price per sqft, Zestimate, Rent Zestimate, HOA fee,
-    property tax rate, annual tax amount, tax assessed value, and price history
-  - Interior & exterior facts & features (bedrooms, bathrooms, full/half baths, sqft, lot size,
-    year built, room types, flooring, appliances, heating, cooling, laundry, parking, exterior)
-  - County, FIPS, neighborhood, Walk/Transit/Bike scores, assigned schools, MLS ID/name,
-    listing agent/brokerage contact info, 3D virtual tour & floor plan links
+Supports gathering 10,000+ listings per state across all 50 US states + DC using:
+  1. Zillow's `PUT /async-create-search-page-state` (`mapResults` + `listResults` — 500+ listings/call)
+  2. 22 disjoint price bands + automatic 2x2 geographic quadrant subdivision for dense regions
+  3. Automatic `SOLD` (`/<state>/sold/`) fallback for smaller states with <10,000 active For Sale listings
+  4. High-throughput 500-row batch inserts into `43023_ziplow_db.sales` via NoCodeBackend MCP
 """
 
 import argparse
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import copy
 import datetime
 import json
 import os
 import re
 import time
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional, Set, Tuple
 from urllib.parse import urljoin
 
+from curl_cffi import requests as cffi_requests
 from dotenv import load_dotenv
 
 from scrape_zillow_rentals import (
@@ -49,6 +43,32 @@ load_dotenv()
 
 SALES_TABLE = os.getenv("NCB_SALES_TABLE", "sales")
 
+# 22 disjoint price bands (each returns up to ~500 mapResults per region/quadrant)
+PRICE_BANDS: List[Tuple[int, int]] = [
+    (0, 75000),
+    (75001, 125000),
+    (125001, 165000),
+    (165001, 200000),
+    (200001, 235000),
+    (235001, 265000),
+    (265001, 295000),
+    (295001, 325000),
+    (325001, 355000),
+    (355001, 385000),
+    (385001, 415000),
+    (415001, 450000),
+    (450001, 490000),
+    (490001, 535000),
+    (535001, 585000),
+    (585001, 645000),
+    (645001, 720000),
+    (720001, 815000),
+    (815001, 950000),
+    (950001, 1200000),
+    (1200001, 1750000),
+    (1750001, 100000000),
+]
+
 
 def format_epoch_ms(val: Any) -> str:
     """Formats a millisecond epoch timestamp (e.g. dateSold) as YYYY-MM-DD."""
@@ -65,13 +85,25 @@ def format_epoch_ms(val: Any) -> str:
         return str(val)
 
 
+def subdivide_bounds(bounds: Dict[str, float]) -> List[Dict[str, float]]:
+    """Splits a geographic bounding box into 4 quadrants (SW, SE, NW, NE)."""
+    lat_mid = (bounds["south"] + bounds["north"]) / 2.0
+    lon_mid = (bounds["west"] + bounds["east"]) / 2.0
+    return [
+        {"west": bounds["west"], "east": lon_mid, "south": bounds["south"], "north": lat_mid},
+        {"west": lon_mid, "east": bounds["east"], "south": bounds["south"], "north": lat_mid},
+        {"west": bounds["west"], "east": lon_mid, "south": lat_mid, "north": bounds["north"]},
+        {"west": lon_mid, "east": bounds["east"], "south": lat_mid, "north": bounds["north"]},
+    ]
+
+
 class ZillowSalesScraper(ZillowColoradoScraper):
-    """Scrapes Zillow For Sale and Recently Sold search pages and /homedetails/ pages."""
+    """Scrapes Zillow For Sale and Recently Sold search pages, mapResults, and /homedetails/ pages."""
 
     def parse_sale_search_card(
         self, card: Dict[str, Any], category: str = "FOR_SALE", default_state: str = "CO"
     ) -> Dict[str, Any]:
-        """Extracts all available fields and picture links from a For Sale or Sold search card."""
+        """Extracts all available fields and picture links from a For Sale or Sold search/map card."""
         detail_url = card.get("detailUrl", "")
         if detail_url and detail_url.startswith("/"):
             detail_url = urljoin("https://www.zillow.com", detail_url)
@@ -127,9 +159,25 @@ class ZillowSalesScraper(ZillowColoradoScraper):
         for fr in flex_recs:
             if isinstance(fr, dict) and fr.get("contentType") == "timeOnInfo":
                 time_on_zillow_str = str(fr.get("displayString") or "")
+        if not time_on_zillow_str and card.get("timeOnZillow"):
+            days_calc = int(card["timeOnZillow"]) // 86400000
+            time_on_zillow_str = f"{days_calc} days" if days_calc >= 0 else ""
+
+        days_on_zillow = parse_int(hdp.get("daysOnZillow"))
+        if days_on_zillow is not None and days_on_zillow < 0:
+            days_on_zillow = (
+                int(card["timeOnZillow"]) // 86400000
+                if card.get("timeOnZillow")
+                else None
+            )
+
+        agent_name = str(card.get("info6String") or "")
+        mls_name = str(card.get("info2String") or "").replace("Listing provided by ", "").strip()
+        brokerage_name = str(card.get("brokerName") or "")
+        on_market_date = str(card.get("availabilityDate") or "")
 
         now_str = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
-        title = card.get("address") or card.get("statusText") or ""
+        title = card.get("address") or hdp.get("streetAddress") or card.get("statusText") or ""
         return {
             "zpid": str(card.get("zpid") or card.get("id") or hdp.get("zpid") or ""),
             "listing_url": detail_url,
@@ -186,13 +234,13 @@ class ZillowSalesScraper(ZillowColoradoScraper):
                 virtual_tour_url="",
             ),
             "amenities_json": json.dumps({"factsAndFeatures": ff}),
-            "home_insights": "",
+            "home_insights": str(card.get("flexFieldText") or ""),
             "facts_and_features": json.dumps(
                 {
                     "hdpData": hdp,
                     "factsAndFeatures": ff,
-                    "listCardRecommendation": recs,
                     "statusText": card.get("statusText"),
+                    "marketingStatus": card.get("marketingStatusSimplifiedCd"),
                 }
             ),
             "walk_score": None,
@@ -205,22 +253,151 @@ class ZillowSalesScraper(ZillowColoradoScraper):
             "image_url": image_url[:500],
             "photo_count": len(photos),
             "photos_json": json.dumps(photos),
-            "videos_and_media_json": json.dumps({"has3DModel": card.get("has3DModel")}),
+            "videos_and_media_json": json.dumps(
+                {"has3DModel": card.get("has3DModel"), "hasVideo": card.get("hasVideo")}
+            ),
             "latitude": str(lat_long.get("latitude") or hdp.get("latitude") or "")[:50],
             "longitude": str(lat_long.get("longitude") or hdp.get("longitude") or "")[:50],
-            "days_on_zillow": parse_int(hdp.get("daysOnZillow")),
+            "days_on_zillow": days_on_zillow,
             "time_on_zillow": time_on_zillow_str[:100],
-            "on_market_date": "",
-            "agent_name": "",
-            "brokerage_name": str(card.get("brokerName") or "")[:255],
+            "on_market_date": on_market_date[:100],
+            "agent_name": agent_name[:255],
+            "brokerage_name": brokerage_name[:255],
             "contact_phone": "",
-            "mls_id": "",
-            "mls_name": "",
+            "mls_id": str(card.get("palsId") or "")[:100],
+            "mls_name": mls_name[:150],
             "provider_listing_id": str(card.get("providerListingId") or "")[:100],
             "schools_json": "[]",
             "description": "",
             "scraped_at": now_str,
         }
+
+    def fetch_map_results_put(
+        self, query_state: Dict[str, Any], referer: str, request_id: int = 2
+    ) -> List[Dict[str, Any]]:
+        """Calls PUT /async-create-search-page-state to retrieve up to 500 mapResults + 41 listResults."""
+        payload = {
+            "searchQueryState": query_state,
+            "wants": {"cat1": ["listResults", "mapResults"]},
+            "requestId": request_id,
+        }
+        try:
+            resp = self.session.put(
+                "https://www.zillow.com/async-create-search-page-state",
+                json=payload,
+                headers={"Content-Type": "application/json", "Referer": referer},
+                timeout=25,
+            )
+            if resp.status_code != 200:
+                return []
+            data = resp.json()
+            sr = data.get("cat1", {}).get("searchResults", {})
+            # Put listResults first (since they have multi-photo carousels) followed by mapResults
+            return (sr.get("listResults") or []) + (sr.get("mapResults") or [])
+        except Exception as exc:
+            print(f"  [!] PUT async-create-search-page-state error: {exc}")
+            return []
+
+    def gather_high_volume_state(
+        self,
+        state_code: str,
+        target_count: int,
+        seen_urls: Set[str],
+        categories: List[str],
+        delay: float = 0.05,
+    ) -> List[Dict[str, Any]]:
+        """
+        Gathers up to `target_count` (e.g. 10,000) unique listings for a state using
+        price-band slicing + 2x2 geographic quadrant subdivision on mapResults.
+        """
+        state_clean = state_code.lower().strip()
+        state_upper = state_clean.upper()
+        collected: List[Dict[str, Any]] = []
+
+        def add_items(items: List[Dict[str, Any]], cat_label: str) -> int:
+            added = 0
+            for item in items:
+                if len(collected) >= target_count:
+                    break
+                rec = self.parse_sale_search_card(item, category=cat_label, default_state=state_upper)
+                u = rec.get("listing_url", "")
+                if not u or u in seen_urls:
+                    continue
+                seen_urls.add(u)
+                collected.append(rec)
+                added += 1
+            return added
+
+        for cat in categories:
+            if len(collected) >= target_count:
+                break
+            cat_label = "SOLD" if cat == "sold" else "FOR_SALE"
+            base_url = (
+                f"https://www.zillow.com/{state_clean}/sold/"
+                if cat == "sold"
+                else f"https://www.zillow.com/{state_clean}/"
+            )
+            next_data = self.fetch_next_data(base_url)
+            if not next_data:
+                continue
+
+            sps = next_data.get("props", {}).get("pageProps", {}).get("searchPageState", {})
+            base_qs = sps.get("queryState") or {}
+            sr = sps.get("cat1", {}).get("searchResults", {})
+            add_items((sr.get("listResults") or []) + (sr.get("mapResults") or []), cat_label)
+
+            if not base_qs.get("mapBounds"):
+                continue
+
+            state_bounds = base_qs["mapBounds"]
+            quadrants = subdivide_bounds(state_bounds)
+            req_id = 2
+
+            # Pass 1: Sweep 22 disjoint price bands across the whole state
+            dense_bands: List[Tuple[int, int]] = []
+            for pmin, pmax in PRICE_BANDS:
+                if len(collected) >= target_count:
+                    break
+                qs = copy.deepcopy(base_qs)
+                qs.setdefault("filterState", {})["price"] = {"min": pmin, "max": pmax}
+                items = self.fetch_map_results_put(qs, referer=base_url, request_id=req_id)
+                req_id += 1
+                added = add_items(items, cat_label)
+                if len(items) >= 450:
+                    dense_bands.append((pmin, pmax))
+                if delay > 0:
+                    time.sleep(delay)
+
+            # Pass 2: If we still need more to reach target_count, subdivide dense price bands into 4 quadrants
+            for pmin, pmax in dense_bands:
+                if len(collected) >= target_count:
+                    break
+                for quad in quadrants:
+                    if len(collected) >= target_count:
+                        break
+                    qs = copy.deepcopy(base_qs)
+                    qs["mapBounds"] = quad
+                    qs.setdefault("filterState", {})["price"] = {"min": pmin, "max": pmax}
+                    items = self.fetch_map_results_put(qs, referer=base_url, request_id=req_id)
+                    req_id += 1
+                    add_items(items, cat_label)
+                    if len(items) >= 450 and len(collected) < target_count:
+                        # Level-2 quadtree subdivision (16 sub-tiles) for ultra-dense metro areas
+                        for sub_quad in subdivide_bounds(quad):
+                            if len(collected) >= target_count:
+                                break
+                            qs2 = copy.deepcopy(base_qs)
+                            qs2["mapBounds"] = sub_quad
+                            qs2.setdefault("filterState", {})["price"] = {"min": pmin, "max": pmax}
+                            sub_items = self.fetch_map_results_put(qs2, referer=base_url, request_id=req_id)
+                            req_id += 1
+                            add_items(sub_items, cat_label)
+                            if delay > 0:
+                                time.sleep(delay)
+                    if delay > 0:
+                        time.sleep(delay)
+
+        return collected
 
     def enrich_sale_detail_url(
         self, url: str, base_record: Optional[Dict[str, Any]] = None
@@ -487,6 +664,58 @@ class ZillowSalesScraper(ZillowColoradoScraper):
         }
 
 
+def get_existing_urls_for_state(ncb_client: NoCodeBackendClient, table: str, state_upper: str) -> Dict[str, Any]:
+    """Fetches existing listing URLs for a single state so per-state deduplication scales to 500k+ rows."""
+    existing: Dict[str, Any] = {}
+    try:
+        res = ncb_client.call_mcp_tool(
+            "execute_sql",
+            {
+                "database": ncb_client.instance,
+                "sql": f"SELECT id, listing_url FROM {table} WHERE state = '{state_upper}' LIMIT 20000;",
+            },
+        )
+        for item in res.get("result", {}).get("content", []):
+            txt = item.get("text", "")
+            if "listing_url" in txt:
+                parsed = json.loads(txt)
+                for res_block in parsed.get("results") or []:
+                    for r in res_block.get("rows") or []:
+                        if isinstance(r, dict) and r.get("listing_url"):
+                            existing[r["listing_url"]] = r.get("id")
+    except Exception as exc:
+        print(f"  [!] Warning checking state {state_upper} existing URLs: {exc}")
+    return existing
+
+
+def insert_state_records_fast(
+    ncb_client: NoCodeBackendClient, table: str, records: List[Dict[str, Any]], batch_size: int = 400
+) -> int:
+    """High-throughput batch insertion into NoCodeBackend using 400-row batches."""
+    inserted = 0
+    for idx in range(0, len(records), batch_size):
+        batch = records[idx : idx + batch_size]
+        for attempt in range(3):
+            try:
+                res = ncb_client.call_mcp_tool(
+                    "insert_mock_data",
+                    {
+                        "database": ncb_client.instance,
+                        "table": table,
+                        "records": batch,
+                    },
+                )
+                if not res.get("result", {}).get("isError", False):
+                    inserted += len(batch)
+                    break
+            except Exception as exc:
+                if attempt == 2:
+                    print(f"  [!] Batch insert failed after 3 attempts: {exc}")
+                else:
+                    time.sleep(1.0)
+    return inserted
+
+
 def build_sales_search_urls(
     states: List[str], categories: List[str], pages_per_state: int = 1
 ) -> List[tuple[str, str, str]]:
@@ -535,18 +764,18 @@ def main() -> None:
         "--per-state",
         type=int,
         default=25,
-        help="Maximum listings to collect per state per category (default: 25).",
+        help="Maximum listings to collect per state (default: 25, supports 10000+).",
     )
     parser.add_argument(
         "--max-listings",
         type=int,
-        default=5000,
-        help="Maximum total listings to scrape across the run (default: 5000).",
+        default=1000000,
+        help="Maximum total listings to scrape across the run (default: 1,000,000).",
     )
     parser.add_argument(
         "--fast",
         action="store_true",
-        help="Fast mode: extract all search card + hdpData + carousel photo links without fetching each detail page.",
+        help="Fast mode: extract all search card / mapResults + hdpData + photo links without fetching each detail page.",
     )
     parser.add_argument(
         "--update-existing",
@@ -561,8 +790,14 @@ def main() -> None:
     parser.add_argument(
         "--delay",
         type=float,
-        default=0.3,
-        help="Delay in seconds between HTTP requests (default: 0.3).",
+        default=0.02,
+        help="Delay in seconds between HTTP requests (default: 0.02).",
+    )
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=4,
+        help="Number of parallel state workers for high-volume nationwide scraping (default: 4).",
     )
     parser.add_argument(
         "--dry-run",
@@ -576,15 +811,18 @@ def main() -> None:
     else:
         target_states = [s.lower() for s in args.states]
 
+    use_high_volume = args.per_state > 500
+
     print("============================================================")
     print("🏡  Zillow For Sale & Recently Sold Scraper -> NoCodeBackend")
     print(f"📌 Database Instance: {NCB_INSTANCE} (Table: {args.table})")
     print(f"🏷️  Categories: {', '.join(c.upper() for c in args.categories)}")
     print(f"🌎 Target States ({len(target_states)}): {', '.join(s.upper() for s in target_states)}")
-    print(f"⚡ Mode: {'FAST (Search Cards + Carousel Photos)' if args.fast else 'FULL DETAIL (Search + Detail Pages)'}")
+    print(
+        f"⚡ Mode: {'HIGH-VOLUME MAP+PRICE SLICER (' + str(args.per_state) + '/state, workers=' + str(args.workers) + ')' if use_high_volume else ('FAST (Search Cards)' if args.fast else 'FULL DETAIL')}"
+    )
     print("============================================================\n")
 
-    scraper = ZillowSalesScraper(delay_seconds=args.delay)
     ncb_client = NoCodeBackendClient(
         instance=NCB_INSTANCE,
         secret_key=NCB_SECRET_KEY,
@@ -593,23 +831,104 @@ def main() -> None:
         data_api_url=NCB_DATA_API_URL,
         table=args.table,
     )
-    existing_urls = {} if args.dry_run else ncb_client.get_existing_urls()
-    seen_urls: Set[str] = set() if args.update_existing else set(existing_urls.keys())
 
     total_scraped = 0
     total_inserted = 0
     total_updated = 0
+
+    if use_high_volume and len(target_states) > 1:
+        def process_one_state(st_code: str) -> Tuple[str, int, int, int]:
+            st_upper = st_code.upper()
+            st_scraper = ZillowSalesScraper(delay_seconds=args.delay)
+            st_existing = (
+                {}
+                if args.dry_run
+                else get_existing_urls_for_state(ncb_client, args.table, st_upper)
+            )
+            st_seen: Set[str] = set() if args.update_existing else set(st_existing.keys())
+            already_cnt = len(st_seen)
+            needed_cnt = max(0, args.per_state - already_cnt)
+            if needed_cnt == 0:
+                print(f"✅ [{st_upper}] Already has {already_cnt} listings in {args.table}", flush=True)
+                return (st_upper, 0, 0, already_cnt)
+            print(
+                f"🚀 [{st_upper}] Gathering {needed_cnt} additional listings (existing: {already_cnt}, target: {args.per_state})...",
+                flush=True,
+            )
+            recs = st_scraper.gather_high_volume_state(
+                state_code=st_code,
+                target_count=needed_cnt,
+                seen_urls=st_seen,
+                categories=args.categories,
+                delay=args.delay,
+            )
+            ins_cnt = 0
+            if recs and not args.dry_run:
+                ins_cnt = insert_state_records_fast(ncb_client, args.table, recs, batch_size=500)
+            print(
+                f"   ✅ [{st_upper}] Synced ({args.table}) -> Inserted: {ins_cnt} (State Total: {already_cnt + ins_cnt})",
+                flush=True,
+            )
+            return (st_upper, len(recs), ins_cnt, already_cnt + ins_cnt)
+
+        with ThreadPoolExecutor(max_workers=args.workers) as pool:
+            futures = {pool.submit(process_one_state, st): st for st in target_states}
+            for fut in as_completed(futures):
+                try:
+                    _, sc_cnt, in_cnt, _ = fut.result()
+                    total_scraped += sc_cnt
+                    total_inserted += in_cnt
+                except Exception as exc:
+                    print(f"  [!] Worker error for {futures[fut]}: {exc}", flush=True)
+
+        print("\n============================================================")
+        print(f"🎉 For Sale & Sold Scrape Complete! Total Scraped: {total_scraped}")
+        if not args.dry_run:
+            print(f"🗄️  Database ({NCB_INSTANCE}.{args.table}) -> Inserted: {total_inserted}, Updated: {total_updated}")
+        print("============================================================")
+        return
 
     for state_code in target_states:
         if total_scraped >= args.max_listings:
             break
 
         state_upper = state_code.upper()
+        state_existing = (
+            {}
+            if args.dry_run
+            else get_existing_urls_for_state(ncb_client, args.table, state_upper)
+        )
+        seen_urls: Set[str] = set() if args.update_existing else set(state_existing.keys())
+        already_count = len(seen_urls)
+
+        if use_high_volume:
+            needed = max(0, args.per_state - already_count)
+            if needed == 0:
+                print(f"✅ {state_upper} already has {already_count} listings in {args.table} (target: {args.per_state})")
+                continue
+            print(f"🚀 [{state_upper}] Gathering {needed} additional listings (existing: {already_count}, target: {args.per_state})...")
+            state_records = scraper.gather_high_volume_state(
+                state_code=state_code,
+                target_count=needed,
+                seen_urls=seen_urls,
+                categories=args.categories,
+                delay=args.delay,
+            )
+            total_scraped += len(state_records)
+            if state_records and not args.dry_run:
+                ins = insert_state_records_fast(ncb_client, args.table, state_records, batch_size=400)
+                total_inserted += ins
+                print(
+                    f"   ✅ {state_upper} Synced ({args.table}) -> Inserted: {ins} "
+                    f"(State Total: {already_count + ins}, Run Inserted: {total_inserted})"
+                )
+            continue
+
         search_targets = build_sales_search_urls(
             [state_code], categories=args.categories, pages_per_state=args.pages_per_state
         )
 
-        state_records: List[Dict[str, Any]] = []
+        state_records = []
         cat_counts: Dict[str, int] = {}
         for _, cat_label, s_url in search_targets:
             if cat_counts.get(cat_label, 0) >= args.per_state or total_scraped >= args.max_listings:
@@ -654,7 +973,7 @@ def main() -> None:
             else:
                 res = ncb_client.upsert_records(
                     state_records,
-                    existing_cache=existing_urls,
+                    existing_cache=state_existing,
                     update_existing=args.update_existing,
                 )
                 total_inserted += res["inserted"]
