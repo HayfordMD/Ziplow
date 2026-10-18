@@ -1,0 +1,29 @@
+# Environment Variables & Secrets
+.env
+.env.*
+!.env.example
+
+# Python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Node Dependencies
+node_modules/
+package-lock.json
+
+# Build & Deployment Artifacts
+dist/
+build/
+.aws-deploy/
+*.zip
+*.log
+
+# OS & Editor files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp

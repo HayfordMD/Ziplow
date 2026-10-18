@@ -1,0 +1,42 @@
+{
+  "name": "backend-build-boilerplate",
+  "version": "1.0.0",
+  "description": "Production Boilerplate for Domain (GoDaddy DNS), AWS SES Email, AWS Lambda Backend, MakersHost Storage, and NoCodeBackend Database",
+  "type": "module",
+  "main": "src/lambda/index.js",
+  "scripts": {
+    "setup": "node scripts/setup-wizard.js",
+    "check": "node scripts/test-connections.js",
+    "aws:auto": "node scripts/auto-configure-aws.js",
+    "dev:lambda": "node src/lambda/local-dev.js",
+    "deploy:lambda": "node scripts/deploy-lambda.js",
+    "dns:list": "node scripts/godaddy-dns.js list",
+    "dns:sync-ses": "node scripts/aws-ses-setup.js --sync-godaddy",
+    "ses:verify": "node scripts/aws-ses-setup.js",
+    "ses:test": "node scripts/test-email.js",
+    "test:storage": "node scripts/test-storage.js",
+    "test:db": "node scripts/test-database.js",
+    "test:stripe": "node scripts/test-stripe.js"
+  },
+  "keywords": [
+    "boilerplate",
+    "aws-lambda",
+    "aws-ses",
+    "godaddy-dns",
+    "makershost",
+    "nocodebackend",
+    "serverless"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@aws-sdk/client-iam": "^3.758.0",
+    "@aws-sdk/client-lambda": "^3.758.0",
+    "@aws-sdk/client-ses": "^3.758.0",
+    "@aws-sdk/client-sns": "^3.758.0",
+    "@aws-sdk/client-sts": "^3.1147.0",
+    "adm-zip": "^0.6.1",
+    "dotenv": "^16.4.7",
+    "stripe": "^23.0.0"
+  }
+}

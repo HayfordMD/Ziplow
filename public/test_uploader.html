@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Backend-Build Services Test Console</title>
+  <style>
+    :root {
+      --bg: #0d1117;
+      --card-bg: #161b22;
+      --border: #30363d;
+      --text: #c9d1d9;
+      --text-muted: #8b949e;
+      --accent: #58a6ff;
+      --accent-hover: #1f6feb;
+      --success: #3fb950;
+      --error: #f85149;
+    }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      max-width: 800px;
+      margin: 40px auto;
+      padding: 0 20px;
+    }
+    h1 {
+      color: #fff;
+      font-size: 24px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      border-bottom: 1px solid var(--border);
+      padding-bottom: 12px;
+    }
+    .badge {
+      font-size: 12px;
+      background: #238636;
+      color: white;
+      padding: 2px 8px;
+      border-radius: 12px;
+    }
+    .card {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 20px;
+      margin-bottom: 24px;
+    }
+    .card h2 {
+      margin-top: 0;
+      font-size: 18px;
+      color: #fff;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .dropzone {
+      border: 2px dashed var(--border);
+      border-radius: 8px;
+      padding: 30px;
+      text-align: center;
+      background: rgba(255,255,255,0.02);
+      cursor: pointer;
+      margin-bottom: 16px;
+      transition: border-color 0.2s;
+    }
+    .dropzone:hover {
+      border-color: var(--accent);
+    }
+    input[type="file"] { display: none; }
+    input[type="text"] {
+      width: 100%;
+      background: #0d1117;
+      border: 1px solid var(--border);
+      color: #fff;
+      padding: 10px 12px;
+      border-radius: 6px;
+      box-sizing: border-box;
+      margin-bottom: 12px;
+      font-size: 14px;
+    }
+    button {
+      background: var(--accent);
+      color: #fff;
+      border: none;
+      padding: 10px 18px;
+      border-radius: 6px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+    button:hover {
+      background: var(--accent-hover);
+    }
+    button:disabled {
+      background: var(--border);
+      color: var(--text-muted);
+      cursor: not-allowed;
+    }
+    .result {
+      margin-top: 14px;
+      padding: 12px;
+      border-radius: 6px;
+      font-size: 13px;
+      word-break: break-all;
+      background: #0d1117;
+      border: 1px solid var(--border);
+    }
+    .success { color: var(--success); }
+    .error { color: var(--error); }
+    img {
+      max-width: 100%;
+      max-height: 250px;
+      border-radius: 6px;
+      margin-top: 12px;
+      border: 1px solid var(--border);
+    }
+  </style>
+</head>
+<body>
+  <h1>
+    🚀 Backend-Build Test Console
+    <span class="badge">Boilerplate</span>
+  </h1>
+
+  <!-- 1. MakersHost Upload Test -->
+  <div class="card">
+    <h2>📦 1. MakersHost Storage Upload</h2>
+    <p style="color: var(--text-muted); margin-top: 0;">Upload an image or video directly to MakersHost (storage.bannkd.com).</p>
+    
+    <div class="dropzone" onclick="document.getElementById('fileInput').click()">
+      <span id="fileLabel">Click to select an image or MP4 file</span>
+      <input type="file" id="fileInput" accept="image/*,video/mp4" onchange="handleFile(this)">
+    </div>
+
+    <button id="uploadBtn" onclick="uploadMakersHost()" disabled>Upload to MakersHost</button>
+    <div id="storageResult" style="display: none;" class="result"></div>
+  </div>
+
+  <!-- 2. Local Lambda / Serverless API Test -->
+  <div class="card">
+    <h2>⚡ 2. AWS Lambda / Local Dev API Health</h2>
+    <p style="color: var(--text-muted); margin-top: 0;">Ping your serverless backend endpoints (running locally on port 3000 or deployed on AWS).</p>
+    
+    <input type="text" id="apiEndpoint" value="http://localhost:3000/api/health" placeholder="http://localhost:3000/api/health or https://...on.aws/api/health">
+    <button onclick="checkHealth()">Ping Endpoint</button>
+    <div id="healthResult" style="display: none;" class="result"></div>
+  </div>
+
+  <!-- 3. Stripe Checkout Session Test -->
+  <div class="card">
+    <h2>💳 3. Stripe Checkout Session Test</h2>
+    <p style="color: var(--text-muted); margin-top: 0;">Test creating a checkout session through your Lambda backend.</p>
+    
+    <input type="text" id="stripePriceId" placeholder="Price ID (e.g. price_1O... or leaves blank to use env default)">
+    <input type="text" id="customerEmail" placeholder="Customer Email (e.g. customer@example.com)">
+    <button onclick="createCheckoutSession()">Create Checkout Session</button>
+    <div id="stripeResult" style="display: none;" class="result"></div>
+  </div>
+
+  <script>
+    let selectedFile = null;
+    const STORAGE_URL = 'http://storage.bannkd.com/api/upload.php';
+    const STORAGE_KEY = 'bannkd_sec_e4b98d27f10a836c92150d68b9c2409f56e187a2';
+
+    function handleFile(input) {
+      if (input.files && input.files[0]) {
+        selectedFile = input.files[0];
+        document.getElementById('fileLabel').innerText = 'Selected: ' + selectedFile.name + ' (' + Math.round(selectedFile.size / 1024) + ' KB)';
+        document.getElementById('uploadBtn').disabled = false;
+      }
+    }
+
+    async function uploadMakersHost() {
+      if (!selectedFile) return;
+      const btn = document.getElementById('uploadBtn');
+      const resDiv = document.getElementById('storageResult');
+      btn.disabled = true;
+      btn.innerText = 'Uploading...';
+      resDiv.style.display = 'block';
+      resDiv.innerHTML = '<span style="color: #8b949e;">Uploading to MakersHost cluster...</span>';
+
+      try {
+        const formData = new FormData();
+        formData.append('file', selectedFile);
+        formData.append('folder', 'backend_uploads');
+
+        const res = await fetch(STORAGE_URL, {
+          method: 'POST',
+          headers: { 'Authorization': 'Bearer ' + STORAGE_KEY },
+          body: formData,
+        });
+
+        const data = await res.json();
+        if (res.ok && data.success) {
+          resDiv.innerHTML = `
+            <div class="success"><b>✅ Upload Successful!</b></div>
+            <p style="margin: 8px 0;">Public URL: <a href="${data.url}" target="_blank" style="color: var(--accent);">${data.url}</a></p>
+            <img src="${data.url}" alt="Uploaded Asset" />
+          `;
+        } else {
+          resDiv.innerHTML = `<div class="error"><b>❌ Upload Failed:</b> ${data.error || 'Unknown error'}</div>`;
+        }
+      } catch (err) {
+        resDiv.innerHTML = `<div class="error"><b>❌ Network Error:</b> ${err.message}</div>`;
+      } finally {
+        btn.disabled = false;
+        btn.innerText = 'Upload Another File';
+      }
+    }
+
+    async function checkHealth() {
+      const url = document.getElementById('apiEndpoint').value;
+      const resDiv = document.getElementById('healthResult');
+      resDiv.style.display = 'block';
+      resDiv.innerHTML = 'Pinging...';
+
+      try {
+        const res = await fetch(url);
+        const data = await res.json();
+        resDiv.innerHTML = `
+          <div class="success"><b>✅ Status ${res.status}:</b></div>
+          <pre style="margin-top: 8px; color: #fff;">${JSON.stringify(data, null, 2)}</pre>
+        `;
+      } catch (err) {
+        resDiv.innerHTML = `<div class="error"><b>❌ Request Failed:</b> ${err.message}</div>`;
+      }
+    }
+
+    async function createCheckoutSession() {
+      const priceId = document.getElementById('stripePriceId').value.trim();
+      const customerEmail = document.getElementById('customerEmail').value.trim();
+      const resDiv = document.getElementById('stripeResult');
+      resDiv.style.display = 'block';
+      resDiv.innerHTML = 'Creating Stripe checkout session...';
+
+      try {
+        const res = await fetch('http://localhost:3000/api/stripe/create-checkout-session', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            priceId: priceId || undefined,
+            customerEmail: customerEmail || undefined,
+            successUrl: window.location.href + '?success=true',
+            cancelUrl: window.location.href + '?canceled=true',
+          }),
+        });
+
+        const data = await res.json();
+        if (res.ok && data.url) {
+          resDiv.innerHTML = `
+            <div class="success"><b>✅ Session Created!</b></div>
+            <p style="margin-top: 8px;">
+              <a href="${data.url}" target="_blank" style="color: var(--accent); font-weight: bold; text-decoration: underline;">
+                👉 Click here to test Stripe Checkout Page
+              </a>
+            </p>
+            <pre style="margin-top: 8px; color: #fff;">${JSON.stringify(data, null, 2)}</pre>
+          `;
+        } else {
+          resDiv.innerHTML = `<div class="error"><b>❌ Error:</b> ${data.error || 'Failed to create session'}</div>`;
+        }
+      } catch (err) {
+        resDiv.innerHTML = `<div class="error"><b>❌ Request Error:</b> ${err.message} (Is local dev server running?)</div>`;
+      }
+    }
+  </script>
+</body>
+</html>
