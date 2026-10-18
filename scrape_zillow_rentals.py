@@ -1352,7 +1352,7 @@ class NoCodeBackendClient:
         inserted_count = 0
         if to_insert:
             if self.mcp_key:
-                batch_size = 20
+                batch_size = 50
                 for idx in range(0, len(to_insert), batch_size):
                     batch = to_insert[idx : idx + batch_size]
                     res = self.call_mcp_tool(

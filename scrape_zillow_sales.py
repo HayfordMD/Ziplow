@@ -610,13 +610,15 @@ def main() -> None:
         )
 
         state_records: List[Dict[str, Any]] = []
+        cat_counts: Dict[str, int] = {}
         for _, cat_label, s_url in search_targets:
+            if cat_counts.get(cat_label, 0) >= args.per_state or total_scraped >= args.max_listings:
+                continue
             cards = scraper.extract_search_results(s_url)
             time.sleep(args.delay)
 
-            cat_count = 0
             for card in cards:
-                if cat_count >= args.per_state or total_scraped >= args.max_listings:
+                if cat_counts.get(cat_label, 0) >= args.per_state or total_scraped >= args.max_listings:
                     break
                 base_rec = scraper.parse_sale_search_card(card, category=cat_label, default_state=state_upper)
                 detail_url = base_rec.get("listing_url", "")
@@ -628,7 +630,7 @@ def main() -> None:
                     enriched = base_rec
                 else:
                     print(
-                        f"🔎 [{state_upper} {cat_label} {cat_count + 1}/{args.per_state}] Enriching: {detail_url}"
+                        f"🔎 [{state_upper} {cat_label} {cat_counts.get(cat_label, 0) + 1}/{args.per_state}] Enriching: {detail_url}"
                     )
                     try:
                         enriched = scraper.enrich_sale_detail_url(detail_url, base_record=base_rec) or base_rec
@@ -643,7 +645,7 @@ def main() -> None:
                     time.sleep(args.delay)
 
                 state_records.append(enriched)
-                cat_count += 1
+                cat_counts[cat_label] = cat_counts.get(cat_label, 0) + 1
                 total_scraped += 1
 
         if state_records:
